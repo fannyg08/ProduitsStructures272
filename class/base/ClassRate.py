@@ -9,7 +9,6 @@ from src.utility.types import Maturity
 class RateModel(ABC):
     """
     Classe abstraite représentant un modèle de taux d'intérêt.
-    Toute sous-classe doit implémenter une méthode 'discount_factor'.
     """
 
     @abstractmethod
@@ -18,7 +17,7 @@ class RateModel(ABC):
         Calcule le facteur d'actualisation pour une échéance donnée.
 
         Args:
-            t (float) : Échéance (en années).
+            t (float) : Échéance en années.
 
         Returns:
             float : Facteur d'actualisation.
@@ -29,14 +28,6 @@ class RateModel(ABC):
 class VasicekModel(RateModel):
     """
     Modèle de taux court de Vasicek.
-    Ce modèle permet d'obtenir des facteurs d'actualisation fermés
-    dans un cadre stochastique.
-
-    Paramètres :
-        - a : vitesse de retour à la moyenne
-        - b : taux de long terme
-        - sigma : volatilité
-        - r0 : taux instantané initial
     """
 
     def __init__(self, a: float, b: float, sigma: float, r0: float):
@@ -46,29 +37,69 @@ class VasicekModel(RateModel):
         self.r0 = r0
 
     def discount_factor(self, t: float) -> float:
-        """
-        Calcule le facteur d'actualisation à l'horizon t selon le modèle de Vasicek.
-
-        Args:
-            t (float) : Maturité en années.
-
-        Returns:
-            float : Valeur du facteur d'actualisation.
-        """
         a, b, sigma, r0 = self.a, self.b, self.sigma, self.r0
         B = (1 - np.exp(-a * t)) / a
         A = (b - sigma**2 / (2 * a**2)) * (B - t) - (sigma**2 / (4 * a)) * B**2
         return np.exp(-A - B * r0)
 
 
+class CIRModel(RateModel):
+    """
+    Modèle de Cox-Ingersoll-Ross (CIR), utilisé pour modéliser l'évolution des taux courts
+    avec une variance strictement positive.
+
+    L’équation différentielle stochastique est :
+        dr_t = a(b - r_t)dt + σ√r_t dW_t
+    """
+
+    def __init__(self, a: float, b: float, sigma: float, r0: float):
+        self.a = a
+        self.b = b
+        self.sigma = sigma
+        self.r0 = r0
+
+    def discount_factor(self, t: float) -> float:
+        a, b, sigma, r0 = self.a, self.b, self.sigma, self.r0
+        gamma = np.sqrt(a**2 + 2 * sigma**2)
+        denom = 2 * gamma + (a + gamma) * (np.exp(gamma * t) - 1)
+        B = 2 * (np.exp(gamma * t) - 1) / denom
+        A = (
+            (2 * gamma * np.exp((a + gamma) * t / 2))
+            / denom
+        ) ** (2 * a * b / sigma**2)
+        return A * np.exp(-B * r0)
+
+
+class HullWhiteModel(RateModel):
+    """
+    Modèle de Hull-White (version affine à un facteur), extension du modèle de Vasicek
+    avec ajustement à la courbe de taux initiale.
+
+    Équation :
+        dr_t = [θ(t) - a r_t] dt + σ dW_t
+    Ici, θ(t) est implicite car on suppose une courbe plate.
+    """
+
+    def __init__(self, a: float, sigma: float, r0: float):
+        self.a = a
+        self.sigma = sigma
+        self.r0 = r0
+
+    def discount_factor(self, t: float) -> float:
+        a, sigma, r0 = self.a, self.sigma, self.r0
+        B = (1 - np.exp(-a * t)) / a
+        A = (
+            np.exp(
+                -0.25 * sigma**2 / a**3 * (1 - np.exp(-a * t))**2
+                * (1 - np.exp(-2 * a * t))
+            )
+        )
+        return A * np.exp(-B * r0)
+
+
 class Rate(RateModel):
     """
     Modèle de taux déterministe, constant ou basé sur une courbe interpolée.
-
-    Ce modèle peut gérer :
-        - Un taux constant
-        - Une courbe de taux donnée à des maturités discrètes, interpolée
-        - Deux types de taux : "continuous" ou "compounded"
     """
 
     def __init__(
@@ -78,15 +109,6 @@ class Rate(RateModel):
         rate_curve: Optional[Dict[Maturity, float]] = None,
         interpolation_type: Literal["linear", "quadratic", "cubic"] = "linear",
     ) -> None:
-        """
-        Initialise un modèle de taux déterministe.
-
-        Args:
-            rate (float, optionnel) : Taux constant.
-            rate_type (str) : Type de capitalisation ("continuous" ou "compounded").
-            rate_curve (dict, optionnel) : Courbe de taux par maturité (objets Maturity).
-            interpolation_type (str) : Type d'interpolation à appliquer sur la courbe.
-        """
         self.__rate = rate
         self.__rate_type = rate_type
         self.__interpol = None
@@ -108,9 +130,6 @@ class Rate(RateModel):
 
         Returns:
             float : Taux interpolé ou constant.
-
-        Raises:
-            ValueError : Si aucun taux ou courbe n'a été fourni.
         """
         if self.__rate is not None:
             return self.__rate
@@ -127,9 +146,6 @@ class Rate(RateModel):
 
         Returns:
             float : Facteur d'actualisation.
-
-        Raises:
-            ValueError : Si le type de taux est invalide.
         """
         rate = self.get_rate(t)
         if self.__rate_type == "continuous":
