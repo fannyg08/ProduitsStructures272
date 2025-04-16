@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Union, Callable
 
 from scipy.optimize import minimize
 
-from src.models.rate import RateModel  # importe la classe abstraite ou ses dérivés
+from base.rate import RateModel  # importe la classe abstraite ou ses dérivés
 from src.utility.types import Maturity
 
 
