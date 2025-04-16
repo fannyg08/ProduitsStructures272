@@ -1,32 +1,14 @@
 from abc import ABC, abstractmethod
 from logging import warn
 from typing import Dict, List, Optional, Union, Callable
-from scipy.optimize import minimize
-import numpy as np
 
+from scipy.optimize import minimize
+
+from src.models.rate import RateModel  # importe la classe abstraite ou ses dérivés
 from src.utility.types import Maturity
 
-# === 1. Interface pour les modèles de taux ===
-class RateModel(ABC):
-    @abstractmethod
-    def discount_factor(self, t: float) -> float:
-        pass
 
-# === 2. Implémentation du modèle de Vasicek ===
-class VasicekModel(RateModel):
-    def __init__(self, a: float, b: float, sigma: float, r0: float):
-        self.a = a
-        self.b = b
-        self.sigma = sigma
-        self.r0 = r0
-
-    def discount_factor(self, t: float) -> float:
-        a, b, sigma, r0 = self.a, self.b, self.sigma, self.r0
-        B = (1 - np.exp(-a * t)) / a
-        A = (b - sigma ** 2 / (2 * a ** 2)) * (B - t) - (sigma ** 2 / (4 * a)) * B ** 2
-        return np.exp(-A - B * r0)
-
-# === 3. Classe abstraite d'obligation ===
+# === 1. Classe abstraite d'obligation ===
 class ABCBond(ABC):
     def __init__(self) -> None:
         pass
@@ -35,7 +17,8 @@ class ABCBond(ABC):
     def compute_price(self):
         pass
 
-# === 4. Optimisation pour le calcul du YTM ===
+
+# === 2. Optimisation pour le calcul du YTM ===
 class Optimization:
     def __init__(
         self,
@@ -57,7 +40,8 @@ class Optimization:
             tol=self.__epsilon,
         )
 
-# === 5. Obligation Zéro-Coupon ===
+
+# === 3. Obligation Zéro-Coupon ===
 class ZeroCouponBond(ABCBond):
     _price: Optional[float] = None
 
@@ -78,7 +62,8 @@ class ZeroCouponBond(ABCBond):
             )
         return self._price
 
-# === 6. Obligation à coupon ===
+
+# === 4. Obligation à coupon ===
 class Bond(ABCBond):
     _price: Optional[float] = None
     _ytm: Optional[float] = None
