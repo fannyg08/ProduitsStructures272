@@ -4,12 +4,12 @@ from typing import Optional
 import numpy as np
 from tqdm import tqdm
 
-from src.pricing.base.volatility import Volatility
-from src.pricing.base.rate import Rate
-from src.utility.types import OptionType, Maturity
+from ClassVolatility import Volatility
+from ClassRate import Rate
+from ClassMaturity import OptionType, Maturity
 
 
-class OptionBase(ABC):
+class Option(ABC):
     def __init__(
         self,
         spot_price: float,
