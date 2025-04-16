@@ -4,8 +4,8 @@ from typing import Dict, List, Optional, Union, Callable
 
 from scipy.optimize import minimize
 
-from base.rate import RateModel  # importe la classe abstraite ou ses dérivés
-from src.utility.types import Maturity
+from base.ClassRate import RateModel  # importe la classe abstraite ou ses dérivés
+from base.ClassMaturity import Maturity
 
 
 # === 1. Classe abstraite d'obligation ===
