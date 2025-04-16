@@ -4,7 +4,7 @@ from typing import Optional
 import numpy as np
 from tqdm import tqdm
 
-from ClassVolatility import Volatility
+from ClassVolatility import VolatilityModel
 from ClassRate import Rate
 from ClassMaturity import OptionType, Maturity
 
