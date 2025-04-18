@@ -200,6 +200,15 @@ class MarketData:
         df = pd.read_csv(filepath, delimiter=delimiter) \
             if from_what.lower() == 'csv' else  pd.read_excel(filepath, sheet_name=sheet_name)
         
+        # On tient compte du fait que les strikes peuvent ne pas concorder entre les maturités
+        # On décide de procéder par interpolation
+        cols_with_na = [col for col in df if df[col].isnull().sum()!=0]
+        df[cols_with_na] = df[cols_with_na].interpolate(method = 'linear', axis = 1)
+        # Pour les valeurs aux extrémités qui ne peuvent pas être interpolées
+        # (en début/fin de colonne ou de ligne)
+        df = df.fillna(method='ffill').fillna(method='bfill')
+        print(f"{df.isnull().sum().sum()} valeurs NA restantes")
+
         # Extraction des données de base : 
         # strikes en colonnes (en ne considérant pas la première colonne de maturités)
         strikes = np.array(df.columns[1:].astype(float))
