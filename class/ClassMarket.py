@@ -21,21 +21,21 @@ class MarketData:
         - strikes : plage de strikes considérée
         - maturities : plage de maturités considérée
         - market_prices : matrice des prix de marché pour les strikes et maturités considérés
+            avec format (len(maturities), len(strikes))
         - dividend_yield : taux de dividende (continu)
         - option_type : précise le type de l'option considérée (call ou put)
         - market_ivs : surface de volatilité implicite (du modèle de BS), calculée en interne
-        - 
     """
     # Données de base
     spot: float  
     risk_free_rate: float  
     strikes: np.ndarray  # Ensemble des prix d'exercice
     maturities: np.ndarray  # Ensemble des maturités
-    market_prices: np.ndarray  # Matrice des prix de marché [strikes, maturities]
+    market_prices: np.ndarray  # Matrice des prix de marché [maturities, strikes]
     dividend_yield: float = 0.0 
-    option_type: str = 'call'  # Matrice des types d'options ('call' ou 'put')
+    option_type: str = 'call'  # Type d'option par défaut
     
-    # Volatilités implicites (matrices [strikes, maturities])
+    # Volatilités implicites (matrices [maturities, strikes])
     market_ivs: np.ndarray = None  
 
     def __post_init__(self):
@@ -43,8 +43,10 @@ class MarketData:
         Initialisation après la création de l'objet.
         """
         # Dimensions
-        if self.market_prices.shape != (len(self.strikes), len(self.maturities)):
-            raise ValueError("La matrice market_prices doit avoir la forme (len(strikes), len(maturities))")
+        if self.market_prices.shape != (len(self.maturities) + 1, len(self.strikes)):
+            print(len(self.maturities), len(self.strikes), self.market_prices.shape)
+            raise ValueError("La matrice market_prices doit avoir la forme (len(maturities), len(strikes)) \n" \
+            f"Or ici, {len(self.maturities), len(self.strikes), self.market_prices.shape}")
         
         # On initialise option_types
         self.option_types = np.full_like(self.market_prices, self.option_type, dtype=object)
@@ -59,13 +61,13 @@ class MarketData:
         """
         self.market_ivs = np.zeros_like(self.market_prices)
         # Calcul de la matrice des volatilités implicites
-        for i, strike in enumerate(self.strikes):
-            for j, maturity in enumerate(self.maturities):
-                self.market_ivs[i, j] = self._implied_volatility_bs(
-                    self.market_prices[i, j],
+        for j, maturity in enumerate(self.maturities):
+            for i, strike in enumerate(self.strikes):
+                self.market_ivs[j, i] = self._implied_volatility_bs(
+                    self.market_prices[j, i],
                     strike,
                     maturity,
-                    self.option_types[i, j]
+                    self.option_types[j, i]
                 )
     
     def _implied_volatility_bs(self, price: float, strike: float, maturity: float, option_type: str) -> float:
@@ -171,12 +173,13 @@ class MarketData:
     def from_file(cls, filepath: str, spot: float, risk_free_rate: float, dividend_yield: float = 0.0, 
                   sheet_name: str = 0, option_type: str = 'call', 
                   from_what: str = 'excel', delimiter = ',',
-                   pricing_date: Optional[str] = None) -> 'MarketData':
+                  pricing_date: Optional[str] = None) -> 'MarketData':
         """
-        Crée un objet MarketData à partir d'un fichier CSV. Concrètement,
-        on s'attend à ce que le fichier CSV ou Excel soit une matrice de prix d'options pour un spot donnée 
-        avec les maturités en ligne et les strikes en colonne, ceci afin d'ensuite calculer la surface de volatilité
-        ou de calibrer les modèles de volatilité. 
+        Crée un objet MarketData à partir d'un fichier CSV ou Excel.
+        
+        Le fichier doit contenir une matrice de prix d'options avec:
+        - Les maturités en ligne (première colonne)
+        - Les strikes en colonne (première ligne)
         
         Inputs :
         ---------
@@ -188,6 +191,7 @@ class MarketData:
             option_type : Type d'option ('call' par défaut, ou 'put')
             from_what : Type de fichier ('excel' ou 'csv')
             delimiter : Pour les fichiers CSV, indique le type de délimitation des colonnes (',', ';',...)
+            pricing_date : Date de valorisation pour calculer les maturités
             
         Output :
         ---------
@@ -199,14 +203,16 @@ class MarketData:
         # Extraction des données de base : 
         # strikes en colonnes (en ne considérant pas la première colonne de maturités)
         strikes = np.array(df.columns[1:].astype(float))
-        raw_maturities = pd.to_datetime(df.iloc[:, 0]) 
+        raw_maturities = pd.to_datetime(df.iloc[1:, 0]) 
         market_prices = df.iloc[:, 1:].values
+        
         if pricing_date is None : 
             pricing_date = dt.datetime.today()
         else:
             pricing_date = pd.to_datetime(pricing_date)
 
         maturities = np.array((raw_maturities - pricing_date).dt.days / 365)
+        
         # On renvoie l'objet MarketData
         return cls(
             spot=spot,
