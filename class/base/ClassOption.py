@@ -4,9 +4,9 @@ from typing import Optional
 import numpy as np
 from tqdm import tqdm
 
-from ClassVolatility import VolatilityModel
-from ClassRate import Rate
-from ClassMaturity import OptionType, Maturity
+from base.ClassVolatility import VolatilityModel, Volatility
+from base.ClassRate import Rate
+from base.ClassMaturity import OptionType, Maturity
 
 
 class Option(ABC):

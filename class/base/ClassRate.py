@@ -3,7 +3,7 @@ import numpy as np
 import math
 from scipy import interpolate
 from typing import Optional, Dict, Literal
-from ClassMaturity import Maturity
+from base.ClassMaturity import Maturity
 
 
 class RateModel(ABC):
