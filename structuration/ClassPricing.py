@@ -22,7 +22,18 @@ BarrierType = Literal["ko", "ki"]
 class PricingEngine:
     """
     Moteur de pricing pour les produits financiers.
-    Supporte le pricing par Black-Scholes ou Monte Carlo.
+    Supporte le pricing par Black-Scholes, Monte Carlo ou par décomposition
+    
+    Explication des méthodes : 
+    - Black Scholes : nous reprenons les formules de B&S. méthode qui marche pour le pricing d'option (?)
+    - Décomposition : pour pricer un produit structuré "simple", on peut utiliser une méthode où on commence par calculer
+    le prix d'un ZC/d'une obligation, puis le prix de l'option associée. L'addition des deux nous donne le prix du structuré
+    - Monte Carlo : obligatoire pour les produits plus complexes, avec des options barrières etc. 
+
+    La façon dont les méthodes sont organisées est la suivante : 
+    Pour chaque "méthode" de pricing, on a une méthode de pricing et une méthode de calcul des greeks. 
+    Ensuite on a price() et calculate_greeks() qui sont les méthodes que nous appelerons en pratique dans le code, car
+    ce sont les méthodes générales. 
     """
     def __init__(
         self,
@@ -36,9 +47,7 @@ class PricingEngine:
         seed: Optional[int] = None
     ):
         """
-        Initialisation du moteur de pricing.
-        
-        Args:
+        Initialisation du moteur de pricing:
             spot_price (float): Prix actuel du sous-jacent
             domestic_rate (RateModel): Modèle de taux domestique
             volatility (VolatilityModel): Modèle de volatilité
@@ -75,24 +84,19 @@ class PricingEngine:
     def price_black_scholes(self, option: Option) -> float:
         """
         Calcule le prix d'une option avec la formule de Black-Scholes.
-        
-        Args:
-            option (Option): Option à évaluer
-            
-        Returns:
-            float: Prix de l'option
         """
         # Paramètres
         S = self._spot_price
         K = option.strike
         T = option.maturity.maturity_in_years
-        r = self._domestic_rate.get_rate(option.maturity)
+        r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
-            q = self._foreign_rate.get_rate(option.maturity)
+            q = -np.log(self._foreign_rate.discount_factor(T)) / T
+        
         
         # Volatilité pour ce strike et cette maturité
-        sigma = self._volatility.get_volatility(K/S, T)
+        sigma = self._volatility.get_implied_volatility(K, T)
         
         # Calcul des paramètres d1 et d2
         d1 = self._black_scholes_d1(S, K, T, r, q, sigma)
@@ -114,13 +118,14 @@ class PricingEngine:
         S = self._spot_price
         K = option.strike
         T = option.maturity.maturity_in_years
-        r = self._domestic_rate.get_rate(option.maturity)
+        r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
-            q = self._foreign_rate.get_rate(option.maturity)
+            q = -np.log(self._foreign_rate.discount_factor(T)) / T
+        
         
         # Volatilité pour ce strike et cette maturité
-        sigma = self._volatility.get_volatility(K/S, T)
+        sigma = self._volatility.get_implied_volatility(K, T)
         
         # Calcul des paramètres d1 et d2
         d1 = self._black_scholes_d1(S, K, T, r, q, sigma)
@@ -174,13 +179,7 @@ class PricingEngine:
     def simulate_paths(self, maturity: Maturity, strike_price: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Génère des trajectoires simulées pour le sous-jacent avec un modèle log-normal.
-        
-        Args:
-            maturity (Maturity): Maturité du produit
-            strike_price (float): Prix d'exercice (utilisé pour la volatilité)
-            
-        Returns:
-            Tuple[ndarray, ndarray]: (paths, time_grid) - les chemins simulés et la grille temporelle
+        Returns:Tuple[ndarray, ndarray]: (paths, time_grid) - les chemins simulés et la grille temporelle
         """
         # Créer une grille temporelle
         time_grid = np.linspace(0, maturity.maturity_in_years, self._num_steps + 1)
@@ -191,15 +190,13 @@ class PricingEngine:
         paths[:, 0] = self._spot_price
         
         # Paramètres du modèle log-normal
-        r = self._domestic_rate.get_rate(maturity)
+        T = maturity.maturity_in_years
+        r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
-            q = self._foreign_rate.get_rate(maturity)
+            q = -np.log(self._foreign_rate.discount_factor(T)) / T
         
-        vol = self._volatility.get_volatility(
-            strike_price / self._spot_price, 
-            maturity.maturity_in_years
-        )
+        vol = self._volatility.get_implied_volatility(strike_price, T)
         
         # Terme de dérive
         drift = (r - q - 0.5 * vol**2) * dt
@@ -215,12 +212,6 @@ class PricingEngine:
     def price_monte_carlo(self, product: Product) -> float:
         """
         Calcule le prix d'un produit par simulation Monte Carlo.
-        
-        Args:
-            product (Product): Le produit à évaluer
-            
-        Returns:
-            float: Prix estimé du produit
         """
         # Simuler les trajectoires pour ce produit
         strike = getattr(product, "strike", self._spot_price)
@@ -238,28 +229,21 @@ class PricingEngine:
             
             # Actualiser chaque payoff selon sa date de paiement
             for i, t in enumerate(payment_times):
-                discount_factor = np.exp(-self._domestic_rate.get_rate(Maturity(maturity_in_years=t)) * t)
-                present_values[i] = payoffs[i] * discount_factor
+                discount_factor = self._domestic_rate.discount_factor(t)
+            present_values[i] = payoffs[i] * discount_factor
                 
             price = np.mean(present_values)
         else:
             # Tous les payoffs sont à maturité
             payoffs = result
-            discount_factor = np.exp(-self._domestic_rate.get_rate(product.maturity) * 
-                                  product.maturity.maturity_in_years)
+            discount_factor = self._domestic_rate.discount_factor(product.maturity.maturity_in_years)
             price = discount_factor * np.mean(payoffs)
         
         return price
     
     def calculate_greeks_monte_carlo(self, product: Product) -> Dict[str, float]:
         """
-        Calcule les grecques par différences finies (bumping).
-        
-        Args:
-            product (Product): Le produit à analyser
-            
-        Returns:
-            Dict[str, float]: Dictionnaire des grecques
+        Calcule les grecques par différences finies ("bumping").
         """
         # Initialiser les grecques
         greeks = {
@@ -285,7 +269,6 @@ class PricingEngine:
         self._spot_price = original_spot - bump_spot
         price_down = self.price_monte_carlo(product)
         
-        # Restaurer le spot
         self._spot_price = original_spot
         
         # Delta et Gamma
@@ -328,12 +311,7 @@ class PricingEngine:
     def price_by_decomposition(self, product: 'DecomposableProduct') -> float:
             """
             Calcule le prix d'un produit par décomposition en composantes élémentaires.
-            
-            Args:
-                product (DecomposableProduct): Le produit à évaluer
-                
-            Returns:
-                float: Prix du produit
+            Il faut que ça soit un produit "decomposable product", sinon ça ne fonctionne pas. 
             """
             components = product.decompose()
             total_price = 0.0
@@ -354,12 +332,6 @@ class PricingEngine:
     def calculate_greeks_by_decomposition(self, product: 'DecomposableProduct') -> Dict[str, float]:
             """
             Calcule les grecques d'un produit par décomposition.
-            
-            Args:
-                product (DecomposableProduct): Le produit à analyser
-                
-            Returns:
-                Dict[str, float]: Dictionnaire des grecques
             """
             components = product.decompose()
             greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
@@ -408,14 +380,7 @@ class PricingEngine:
 
     def price(self, product: Product, method: Literal["black_scholes", "monte_carlo", "decomposition"] = "black_scholes") -> float:
         """
-        Calcule le prix d'un produit financier.
-        
-        Args:
-            product (Product): Le produit à évaluer
-            method (str): Méthode de pricing à utiliser
-            
-        Returns:
-            float: Prix du produit
+        Calcule le prix d'un produit financier selon la méthode choisie
         """
         if method == "black_scholes":
             if isinstance(product, Option):
@@ -432,14 +397,7 @@ class PricingEngine:
     
     def calculate_greeks(self, product: Product, method: Literal["black_scholes", "monte_carlo", "decomposition"] = "black_scholes") -> Dict[str, float]:
             """
-            Calcule les grecques d'un produit financier.
-            
-            Args:
-                product (Product): Le produit à analyser
-                method (str): Méthode de calcul à utiliser
-                
-            Returns:
-                Dict[str, float]: Dictionnaire des grecques
+            Calcule les grecques d'un produit financier selon la méthode chosie. 
             """
             if method == "black_scholes":
                 if isinstance(product, Option):
