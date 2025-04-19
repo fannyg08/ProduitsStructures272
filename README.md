@@ -24,25 +24,25 @@ Contient les classes pour la structuration et la valorisation des produits :
 
 ## Flux de Travail
 
-### 1. Données de Marché
+#### 1. Données de Marché
 Le point de départ est la classe `MarketData`, qui stocke les informations de marché nécessaires à la calibration :
 - Prix du sous-jacent (spot)
 - Taux sans risque
 - Prix d'options pour différents strikes et maturités
 - Taux de dividende
 
-### 2. Modèles de Volatilité
+#### 2. Modèles de Volatilité
 Les modèles de volatilité (comme `SSVIModel`) utilisent les données de marché pour leur calibration :
 - Ils implémentent la classe abstraite `VolatilityModel`
 - Ils permettent de calculer la volatilité implicite pour un strike et une maturité donnés
 
-### 3. Moteur de Pricing
+#### 3. Moteur de Pricing
 Le `PricingEngine` utilise les modèles calibrés pour valoriser les produits :
 - Il prend en entrée les modèles de taux et de volatilité
 - Il supporte différentes méthodes de pricing (Black-Scholes, Monte Carlo)
 - Il peut calculer les grecques
 
-### 4. Produits Financiers
+#### 4. Produits Financiers
 Le système modélise différents types de produits :
 - **Options** : Call, Put, options exotiques
 - **Obligations** : Zéro-coupon, coupons fixes
@@ -124,50 +124,6 @@ barrier_note = CapitalProtectedNoteWithBarrier(
 price = pricing_engine.price(barrier_note, method="monte_carlo")
 ```
 
-## Classes principales
-
-### MarketData
-Stocke et gère les données de marché nécessaires à la calibration des modèles :
-- Prix spot du sous-jacent
-- Taux sans risque
-- Strikes et maturités
-- Prix d'options de marché
-- Calcul des volatilités implicites
-
-### VolatilityModel
-Classe abstraite pour les modèles de volatilité :
-- Calibration aux données de marché
-- Calcul de volatilité implicite
-- Calcul de volatilité locale (si applicable)
-
-### SSVIModel
-Implémentation du modèle SSVI (Surface Stochastic Volatility Inspired) :
-- Calibration en deux étapes (ATM puis smile)
-- Paramètres : kappa, v0, v_inf, rho, eta, lambda
-
-### PricingEngine
-Moteur de valorisation des produits financiers :
-- Pricing par Black-Scholes (options vanilles)
-- Pricing par Monte Carlo (options exotiques et produits structurés)
-- Calcul des grecques
-
-### Product
-Classe abstraite de base pour tous les produits structurés :
-- Sous-jacent, maturité, nominal
-- Méthode payoff abstraite à implémenter
-
-### CapitalProtectedNoteWithBarrier
-Exemple de produit structuré combinant :
-- Protection du capital
-- Participation à la hausse conditionnée par une barrière
-
-## Recommandations pour le Développement Collaboratif
-
-1. **Utiliser des importations claires** dans `__init__.py` pour simplifier l'utilisation des modules
-2. **Respecter l'interface** des classes abstraites pour maintenir la cohérence
-3. **Documenter** les classes et méthodes avec des docstrings
-4. **Tester** chaque composant individuellement avant l'intégration
-5. **Coordonner** les modifications de l'API entre les différents développeurs
 
 ## Prérequis
 
