@@ -2,13 +2,14 @@ from abc import ABC, abstractmethod
 import numpy as np
 from scipy import stats
 from dataclasses import dataclass
-from ClassProduit import Product,CapitalProtectedNoteTwinWin,CapitalProtectedNote, CapitalProtectedNoteWithBarrier, CapitalProtectedNoteWithCoupon
+from structuration.ClassFixedIncome import ABCBond, Bond, ZeroCouponBond
+from structuration.ClassProduit import DecomposableProduct, Product,CapitalProtectedNoteTwinWin,CapitalProtectedNote, CapitalProtectedNoteWithBarrier, CapitalProtectedNoteWithCoupon
 from typing import Dict, List, Optional, Tuple, Union, Literal
 import numpy as np
 from datetime import datetime
 from base.ClassMaturity import Maturity, DayCountConvention
 from base.ClassRate import RateModel
-from base.ClassVolatility import VolatilityModel
+from structuration.ClassVolatility import VolatilityModel
 from base.ClassOption import Option
 import tqdm
 
@@ -323,8 +324,89 @@ class PricingEngine:
         greeks["rho"] = base_price * 0.1  
         
         return greeks
-    
-    def price(self, product: Product, method: Literal["black_scholes", "monte_carlo"] = "black_scholes") -> float:
+
+    def price_by_decomposition(self, product: 'DecomposableProduct') -> float:
+            """
+            Calcule le prix d'un produit par décomposition en composantes élémentaires.
+            
+            Args:
+                product (DecomposableProduct): Le produit à évaluer
+                
+            Returns:
+                float: Prix du produit
+            """
+            components = product.decompose()
+            total_price = 0.0
+            
+            for component in components:
+                if isinstance(component, ABCBond):
+                    # Pricing des composantes obligataires
+                    total_price += component.compute_price()
+                elif isinstance(component, Option):
+                    # Pricing des composantes optionnelles
+                    total_price += self.price_black_scholes(component)
+                else:
+                    # Pricing des autres composantes via Monte Carlo
+                    total_price += self.price_monte_carlo(component)
+                    
+            return total_price
+
+    def calculate_greeks_by_decomposition(self, product: 'DecomposableProduct') -> Dict[str, float]:
+            """
+            Calcule les grecques d'un produit par décomposition.
+            
+            Args:
+                product (DecomposableProduct): Le produit à analyser
+                
+            Returns:
+                Dict[str, float]: Dictionnaire des grecques
+            """
+            components = product.decompose()
+            greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
+            
+            for component in components:
+                component_greeks = {}
+                
+                if isinstance(component, Option):
+                    component_greeks = self.calculate_greeks_black_scholes(component)
+                else:
+                    # Pour les obligations, seules certaines grecques sont pertinentes
+                    if isinstance(component, ABCBond):
+                        # Calcul simplifié du rho pour les obligations
+                        component_greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}
+                        
+                        # Calcul de rho par bump du taux
+                        original_price = component.compute_price()
+                        
+                        # Créer une copie du rate model avec un bump de 0.01%
+                        bump = 0.0001  # 1 bp
+                        rate_value = component._rate_model.get_rate() if hasattr(component, '_rate_model') else 0.0
+                        
+                        # Modifié pour accéder au rate_model correct selon le type d'obligation
+                        if isinstance(component, ZeroCouponBond):
+                            component.__rate_model.set_rate(rate_value + bump)
+                            bumped_price = component.compute_price(force_recalculate=True)
+                            component.__rate_model.set_rate(rate_value)
+                        elif isinstance(component, Bond):
+                            component.__rate_model.set_rate(rate_value + bump)
+                            bumped_price = component.compute_price(force_rate=rate_value + bump)
+                            component.__rate_model.set_rate(rate_value)
+                        else:
+                            bumped_price = original_price
+                        
+                        component_greeks["rho"] = (bumped_price - original_price) / bump * 100  # en % de taux
+                    else:
+                        # Autres composantes via Monte Carlo
+                        component_greeks = self.calculate_greeks_monte_carlo(component)
+                
+                # Agréger les grecques
+                for greek in greeks:
+                    if greek in component_greeks:
+                        greeks[greek] += component_greeks[greek]
+            
+            return greeks
+
+    def price(self, product: Product, method: Literal["black_scholes", "monte_carlo", "decomposition"] = "black_scholes") -> float:
         """
         Calcule le prix d'un produit financier.
         
@@ -340,24 +422,36 @@ class PricingEngine:
                 return self.price_black_scholes(product)
             else:
                 raise ValueError(f"La méthode Black-Scholes n'est disponible que pour les options, pas pour {type(product).__name__}")
+        elif method == "decomposition":
+            if isinstance(product, DecomposableProduct):
+                return self.price_by_decomposition(product)
+            else:
+                raise ValueError(f"La méthode de décomposition n'est disponible que pour les produits décomposables, pas pour {type(product).__name__}")
         else:  # monte_carlo
             return self.price_monte_carlo(product)
     
-    def calculate_greeks(self, product: Product, method: Literal["black_scholes", "monte_carlo"] = "black_scholes") -> Dict[str, float]:
-        """
-        Calcule les grecques d'un produit financier.
-        
-        Args:
-            product (Product): Le produit à analyser
-            method (str): Méthode de calcul à utiliser
+    def calculate_greeks(self, product: Product, method: Literal["black_scholes", "monte_carlo", "decomposition"] = "black_scholes") -> Dict[str, float]:
+            """
+            Calcule les grecques d'un produit financier.
             
-        Returns:
-            Dict[str, float]: Dictionnaire des grecques
-        """
-        if method == "black_scholes":
-            if isinstance(product, Option):
-                return self.calculate_greeks_black_scholes(product)
-            else:
-                raise ValueError(f"Le calcul analytique des grecques n'est disponible que pour les options, pas pour {type(product).__name__}")
-        else:  # monte_carlo
-            return self.calculate_greeks_monte_carlo(product)
+            Args:
+                product (Product): Le produit à analyser
+                method (str): Méthode de calcul à utiliser
+                
+            Returns:
+                Dict[str, float]: Dictionnaire des grecques
+            """
+            if method == "black_scholes":
+                if isinstance(product, Option):
+                    return self.calculate_greeks_black_scholes(product)
+                else:
+                    raise ValueError(f"Le calcul analytique des grecques n'est disponible que pour les options, pas pour {type(product).__name__}")
+            elif method == "decomposition":
+                if isinstance(product, DecomposableProduct):
+                    return self.calculate_greeks_by_decomposition(product)
+                else:
+                    raise ValueError(f"La méthode de décomposition n'est disponible que pour les produits décomposables, pas pour {type(product).__name__}")
+            else:  # monte_carlo
+                return self.calculate_greeks_monte_carlo(product)
+        
+          

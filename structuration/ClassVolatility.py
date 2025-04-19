@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from scipy.optimize import minimize
 from typing import Dict, Optional
-from ClassMarket import MarketData
+from structuration.ClassMarket import MarketData
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D

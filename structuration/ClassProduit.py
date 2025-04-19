@@ -4,8 +4,10 @@ import numpy as np
 from datetime import datetime
 
 from base.ClassMaturity import Maturity, DayCountConvention
+from base.ClassOption import Option
 from base.ClassRate import RateModel
-from base.ClassVolatility import VolatilityModel
+from structuration.ClassFixedIncome import ABCBond, ZeroCouponBond
+from structuration.ClassVolatility import VolatilityModel
 
 # Types pour les produits structurés
 BarrierDirection = Literal["up", "down"]
@@ -53,7 +55,7 @@ class Product(ABC):
         """
         Calcule le payoff du produit basé sur les chemins simulés.
         Gère 2 cas : lorsque des produits vanille, il y a en général un seul payoff. Mais dans le cas de 
-        Produits structurés, il peut y en avoir plusieurs selon la maturité et le type de produit. 
+        Produits structurés, il peut y en avoir plusieurs selon la maturité et le type de produit.
         Args:
             paths (ndarray): Matrice de simulations de trajectoires (n_simulations x n_steps)
             time_grid (ndarray, optional): Grille temporelle utilisée pour la simulation
@@ -64,74 +66,102 @@ class Product(ABC):
                 - Soit un tuple (payoffs, payment_times) avec leurs dates de paiement respectives
         """
         pass
+class DecomposableProduct(Product):
+    """
+    Interface pour les produits qui peuvent être décomposés en composantes élémentaires.
+    """
+    
+    @abstractmethod
+    def decompose(self) -> List[Union[ABCBond, Option, Product]]:
+        """
+        Décompose le produit en composantes élémentaires.
+        
+        Returns:
+            List[Union[ABCBond, Option, Product]]: Liste des composantes
+        """
+        pass
 
 
-class CapitalProtectedNote(Product):
+class CapitalProtectedNote(DecomposableProduct):
     """
-    Note à capital protégé: combine protection du capital avec participation à la hausse.
+    Note à capital protégé avec participation à la hausse.
     """
+    
     def __init__(
-        self, 
+        self,
         underlying_id: str,
         maturity: Maturity,
         nominal: float,
         strike: float,
         participation_rate: float,
-        capital_protection: float
+        capital_protection: float,
+        rate_model: RateModel
     ):
         """
         Initialisation d'une note à capital protégé.
         
         Args:
             underlying_id (str): Identifiant du sous-jacent
-            maturity (Maturity): Objet représentant la maturité du produit
-            nominal (float): Valeur nominale du produit
-            strike (float): Prix d'exercice du produit (niveau du strike)
-            participation_rate (float): Taux de participation à la hausse
-            capital_protection (float): Niveau de protection (en % du nominal)
+            maturity (Maturity): Maturité du produit
+            nominal (float): Valeur nominale
+            strike (float): Prix d'exercice
+            participation_rate (float): Taux de participation (>0)
+            capital_protection (float): Niveau de protection (entre 0 et 1)
+            rate_model (RateModel): Modèle de taux pour la composante obligataire
         """
         super().__init__(underlying_id, maturity, nominal)
         self._strike = strike
         self._participation_rate = participation_rate
         self._capital_protection = capital_protection
-        
-    @property
-    def strike(self) -> float:
-        """Prix d'exercice."""
-        return self._strike
+        self._rate_model = rate_model
     
-    @property
-    def participation_rate(self) -> float:
-        """Taux de participation."""
-        return self._participation_rate
-    
-    @property
-    def capital_protection(self) -> float:
-        """Niveau de protection du capital."""
-        return self._capital_protection
+    def decompose(self) -> List[Union[ABCBond, Option, Product]]:
+        """
+        Décompose la note à capital protégé en une obligation et une option.
         
+        Returns:
+            List[Union[ABCBond, Option, Product]]: Liste des composantes
+        """
+        # Composante obligataire (capital protégé)
+        protected_amount = self._nominal * self._capital_protection
+        bond = ZeroCouponBond(
+            rate_model=self._rate_model,
+            maturity=self._maturity,
+            nominal=protected_amount
+        )
+        
+        # Composante optionnelle (participation à la hausse)
+        option_nominal = self._nominal * (1 - self._capital_protection) * self._participation_rate
+        option = Option(
+            spot_price=0,  # Sera défini par le pricing engine
+            strike_price=self._strike,
+            maturity=self._maturity,
+            domestic_rate=self._rate_model,
+            volatility=0,  # Sera défini par le pricing engine
+            option_type="call",
+            nominal=option_nominal
+        )
+        
+        return [bond, option]
+    
     def payoff(self, paths: np.ndarray, time_grid: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Calcule le payoff de la note à capital protégé.
         
         Args:
-            paths (ndarray): Matrice de simulations de trajectoires (n_simulations x n_steps)
-            time_grid (ndarray, optional): Non utilisé dans ce cas
+            paths (ndarray): Trajectoires simulées
+            time_grid (ndarray, optional): Grille temporelle
             
         Returns:
-            ndarray: Vecteur des payoffs pour chaque simulation
+            ndarray: Payoffs du produit
         """
+        # Retourne le capital protégé + participation à la hausse, s'il y en a
         final_prices = paths[:, -1]
-        strike = self._strike
-        performance = (final_prices - strike) / strike
+        protected_amount = self._nominal * self._capital_protection
+        participation = self._nominal * (1 - self._capital_protection) * self._participation_rate * np.maximum(0, final_prices / self._strike - 1)
         
-        # Protection du capital + participation à la hausse
-        payoffs = self._nominal * np.maximum(
-            self._capital_protection, 
-            1 + self._participation_rate * np.maximum(0, performance)
-        )
-        
-        return payoffs
+        return protected_amount + participation
+
 
 
 class AutocallNote(Product):

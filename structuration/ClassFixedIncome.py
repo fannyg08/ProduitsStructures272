@@ -61,6 +61,18 @@ class ZeroCouponBond(ABCBond):
                 self.__maturity.maturity_in_years
             )
         return self._price
+    
+    @property
+    def rate_model(self) -> RateModel:
+        return self.__rate_model
+    
+    @property
+    def maturity(self) -> Maturity:
+        return self.__maturity
+    
+    @property
+    def nominal(self) -> float:
+        return self.__nominal
 
 
 # === 4. Obligation à coupon ===
@@ -135,3 +147,22 @@ class Bond(ABCBond):
             for t in terms
         ]
         return coupons
+    @property
+    def rate_model(self) -> RateModel:
+        return self.__rate_model
+    
+    @property
+    def maturity(self) -> Maturity:
+        return self.__maturity
+    
+    @property
+    def nominal(self) -> float:
+        return self.__nominal
+    
+    @property
+    def coupon_rate(self) -> float:
+        return self.__coupon_rate
+    
+    @property
+    def nb_coupon(self) -> int:
+        return self.__nb_coupon

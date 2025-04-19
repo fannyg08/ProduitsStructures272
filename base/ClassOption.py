@@ -4,7 +4,7 @@ from typing import Optional
 import numpy as np
 from tqdm import tqdm
 
-from base.ClassVolatility import VolatilityModel, Volatility
+from structuration.ClassVolatility import VolatilityModel
 from base.ClassRate import Rate
 from base.ClassMaturity import OptionType, Maturity
 
@@ -16,7 +16,7 @@ class Option(ABC):
         strike_price: float,
         maturity: Maturity,
         domestic_rate: Rate,
-        volatility: Volatility,
+        volatility: 0.01,  #la vol à revoir
         option_type: OptionType,
         dividend: Optional[float] = None,
         foreign_rate: Optional[Rate] = None,

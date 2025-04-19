@@ -3,7 +3,7 @@ import numpy as np
 from base.ClassMaturity import Maturity, OptionType
 from base.ClassRate import Rate
 from base.ClassOption import Option, Optional
-from base.ClassVolatility import VolatilityModel,Volatility
+from structuration.ClassVolatility import VolatilityModel,Volatility
 
 class CallOption(Option):
     def __init__(
