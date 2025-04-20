@@ -16,7 +16,7 @@ class Option(ABC):
         strike_price: float,
         maturity: Maturity,
         domestic_rate: Rate,
-        volatility: 0.01,  #la vol à revoir
+        volatility: VolatilityModel,
         option_type: OptionType,
         dividend: Optional[float] = None,
         foreign_rate: Optional[Rate] = None,
@@ -54,19 +54,19 @@ class Option(ABC):
             float : Valeur de d1.
         """
         rate_difference = (
-            (self._domestic_rate.get_rate(self._maturity) - self._dividend)
+            (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
             if self._foreign_rate is None
             else (
-                self._domestic_rate.get_rate(self._maturity)
-                - self._foreign_rate.get_rate(self._maturity)
+                self._domestic_rate.discount_factor(self._maturity)
+                - self._foreign_rate.discount_factor(self._maturity)
             )
         )
         return (
             np.log(self._spot_price / self._strike_price)
             + (
-                (self._domestic_rate.get_rate(self._maturity) - self._dividend)
+                (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
                 + 0.5
-                * self._volatility.get_volatility(
+                * self._volatility.get_implied_volatility(
                     self._strike_price / self._spot_price,
                     self._maturity.maturity_in_years,
                 )
@@ -74,7 +74,7 @@ class Option(ABC):
             )
             * self._maturity.maturity_in_years
         ) / (
-            self._volatility.get_volatility(
+            self._volatility.get_implied_volatility(
                 self._strike_price / self._spot_price, self._maturity.maturity_in_years
             )
             * np.sqrt(self._maturity.maturity_in_years)
@@ -90,9 +90,9 @@ class Option(ABC):
         return (
             np.log(self._spot_price / self._strike_price)
             + (
-                (self._domestic_rate.get_rate(self._maturity) - self._dividend)
+                (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
                 + 0.5
-                * self._volatility.get_volatility(
+                * self._volatility.get_implied_volatility(
                     self._strike_price / self._spot_price,
                     self._maturity.maturity_in_years,
                 )
@@ -100,11 +100,11 @@ class Option(ABC):
             )
             * self._maturity.maturity_in_years
         ) / (
-            self._volatility.get_volatility(
+            self._volatility.get_implied_volatility(
                 self._strike_price / self._spot_price, self._maturity.maturity_in_years
             )
             * np.sqrt(self._maturity.maturity_in_years)
-        ) - self._volatility.get_volatility(
+        ) - self._volatility.get_implied_volatility(
             self._strike_price / self._spot_price, self._maturity.maturity_in_years
         ) * np.sqrt(
             self._maturity.maturity_in_years
@@ -118,7 +118,7 @@ class Option(ABC):
     @property
     def d2(self) -> float:
         """Renvoie la valeur de d2 (recalculé à partir de d1 pour éviter les erreurs cumulées)."""
-        return self._d1 - self._volatility.get_volatility(
+        return self._d1 - self._volatility.get_implied_volatility(
             self._strike_price / self._spot_price, self._maturity.maturity_in_years
         ) * np.sqrt(self._maturity.maturity_in_years)
 
@@ -183,14 +183,14 @@ class Option(ABC):
         """
         dt = self._maturity.maturity_in_years / num_steps
         nudt = (
-            (self._domestic_rate.get_rate(self._maturity) - self._dividend)
+            (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
             - 0.5
-            * self._volatility.get_volatility(
+            * self._volatility.get_implied_volatility(
                 self._strike_price / self._spot_price, self._maturity.maturity_in_years
             )**2
         ) * dt
 
-        volsdt = self._volatility.get_volatility(
+        volsdt = self._volatility.get_implied_volatility(
             self._strike_price / self._spot_price, self._maturity.maturity_in_years
         ) * np.sqrt(dt)
 

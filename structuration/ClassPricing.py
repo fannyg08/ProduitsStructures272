@@ -2,17 +2,19 @@ from abc import ABC, abstractmethod
 import numpy as np
 from scipy import stats
 from dataclasses import dataclass
-from structuration.ClassFixedIncome import ABCBond, Bond, ZeroCouponBond
-from structuration.Produits import DecomposableProduct, Product,CapitalProtectedNoteTwinWin,CapitalProtectedNote, CapitalProtectedNoteWithBarrier, CapitalProtectedNoteWithCoupon
 from typing import Dict, List, Optional, Tuple, Union, Literal
 import numpy as np
 from datetime import datetime
 from base.ClassMaturity import Maturity, DayCountConvention
 from base.ClassRate import RateModel
-from structuration.ClassVolatility import VolatilityModel
 from base.ClassOption import Option
 import tqdm
-
+from .Produits.ProductBase import Product, DecomposableProduct
+from .Produits.ProtectedCapital import CapitalProtectedNote, CapitalProtectedNoteTwinWin, CapitalProtectedNoteWithBarrier, CapitalProtectedNoteWithCoupon,AutocallNote
+from .Produits.Participation import TrackerCertificate, OutperformanceCertificate,BonusCertificate
+from .Produits.YieldEnhancement import ReverseConvertible,DiscountCertificate
+from .ClassFixedIncome import Bond, ZeroCouponBond, ABCBond
+from .ClassVolatility import VolatilityModel
 
 # Types pour les produits structurés
 BarrierDirection = Literal["up", "down"]

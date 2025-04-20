@@ -3,24 +3,22 @@ import numpy as np
 from base.ClassMaturity import Maturity, OptionType
 from base.ClassRate import Rate
 from base.ClassOption import Option, Optional
-from structuration.ClassVolatility import VolatilityModel,Volatility
+from structuration.ClassVolatility import VolatilityModel
 
-class CallOption(Option):
+class EuropeanOption(Option):
     def __init__(
         self,
         spot_price: float,
         strike_price: float,
         maturity: Maturity,
         domestic_rate: Rate,
-        volatility: Volatility,
+        volatility: VolatilityModel,
+        option_type: str, 
         dividend: Optional[float] = None,
         foreign_rate: Optional[Rate] = None,
     ) -> None:
         """
-        Option d'achat (Call) sur un actif sous-jacent.
-        
-        Args:
-            Voir la documentation de la classe Option.
+        Option européenne (Call ou Put) sur un actif sous-jacent.
         """
         super().__init__(
             spot_price=spot_price,
@@ -28,67 +26,43 @@ class CallOption(Option):
             maturity=maturity,
             domestic_rate=domestic_rate,
             volatility=volatility,
-            option_type=OptionType.CALL,
+            option_type=option_type,
             dividend=dividend,
             foreign_rate=foreign_rate,
         )
-    
+
     def payoff(self, paths: np.ndarray) -> np.ndarray:
         """
-        Calcule le payoff de l'option Call à maturité.
-        
-        Args:
-            paths (np.ndarray): Trajectoires de prix du sous-jacent, où la dernière colonne
-                               représente les prix à maturité.
-        
-        Returns:
-            np.ndarray: Payoff pour chaque trajectoire.
+        Calcule le payoff de l'option à maturité selon le type.
         """
         final_prices = paths[:, -1]
-        return np.maximum(0, final_prices - self._strike_price)
+        if self._option_type == "call":
+            return np.maximum(0, final_prices - self._strike_price)
+        elif self._option_type == "put":
+            return np.maximum(0, self._strike_price - final_prices)
+        else:
+            raise ValueError(f"Type d'option non reconnu : {self._option_type}")
 
+    def compute_price(self):
+        raise NotImplementedError("Utilisez un pricer pour calculer le prix.")
 
-class PutOption(Option):
-    def __init__(
-        self,
-        spot_price: float,
-        strike_price: float,
-        maturity: Maturity,
-        domestic_rate: Rate,
-        volatility: Volatility,
-        dividend: Optional[float] = None,
-        foreign_rate: Optional[Rate] = None,
-    ) -> None:
-        """
-        Option de vente (Put) sur un actif sous-jacent.
-        
-        Args:
-            Voir la documentation de la classe Option.
-        """
-        super().__init__(
-            spot_price=spot_price,
-            strike_price=strike_price,
-            maturity=maturity,
-            domestic_rate=domestic_rate,
-            volatility=volatility,
-            option_type=OptionType.PUT,
-            dividend=dividend,
-            foreign_rate=foreign_rate,
-        )
-    
-    def payoff(self, paths: np.ndarray) -> np.ndarray:
-        """
-        Calcule le payoff de l'option Put à maturité.
-        
-        Args:
-            paths (np.ndarray): Trajectoires de prix du sous-jacent, où la dernière colonne
-                               représente les prix à maturité.
-        
-        Returns:
-            np.ndarray: Payoff pour chaque trajectoire.
-        """
-        final_prices = paths[:, -1]
-        return np.maximum(0, self._strike_price - final_prices)
+    def compute_greeks(self):
+        raise NotImplementedError("Utilisez un pricer pour les grecques.")
+
+    def compute_delta(self):
+        raise NotImplementedError()
+
+    def compute_gamma(self):
+        raise NotImplementedError()
+
+    def compute_vega(self):
+        raise NotImplementedError()
+
+    def compute_theta(self):
+        raise NotImplementedError()
+
+    def compute_rho(self):
+        raise NotImplementedError()
 
 
 class BarrierOption(Option):
@@ -98,7 +72,7 @@ class BarrierOption(Option):
         strike_price: float,
         maturity: Maturity,
         domestic_rate: Rate,
-        volatility: Volatility,
+        volatility: VolatilityModel,
         option_type: OptionType,
         barrier: float,
         barrier_type: str,
@@ -119,7 +93,7 @@ class BarrierOption(Option):
         )
         self._barrier = barrier
         
-        # Vérification des valeurs acceptées pour les types de barrière
+        # Gestion des erreurs / Vérification des valeurs acceptées pour les types de barrière
         if barrier_type not in ['up', 'down']:
             raise ValueError("barrier_type doit être 'up' ou 'down'")
         self._barrier_type = barrier_type
@@ -131,13 +105,6 @@ class BarrierOption(Option):
     def payoff(self, paths: np.ndarray) -> np.ndarray:
         """
         Calcule le payoff de l'option à barrière.
-        
-        Args:
-            paths (np.ndarray): Trajectoires de prix du sous-jacent, où chaque ligne
-                              représente une trajectoire et chaque colonne un pas de temps.
-        
-        Returns:
-            np.ndarray: Payoff pour chaque trajectoire.
         """
         final_prices = paths[:, -1]
         
@@ -150,7 +117,7 @@ class BarrierOption(Option):
             barrier_hit = np.any(paths <= self._barrier, axis=1)
         
         # Calcul du payoff de base selon le type d'option
-        if self._option_type == OptionType.CALL:
+        if self._option_type == "call":
             base_payoff = np.maximum(0, final_prices - self._strike_price)
         else:  # PUT
             base_payoff = np.maximum(0, self._strike_price - final_prices)
@@ -159,7 +126,7 @@ class BarrierOption(Option):
         if self._knock_type == 'in':
             # Knock-in: l'option est active uniquement si la barrière a été franchie
             payoff = np.where(barrier_hit, base_payoff, 0)
-        else:  # 'out'
+        else:  
             # Knock-out: l'option est active uniquement si la barrière n'a pas été franchie
             payoff = np.where(barrier_hit, 0, base_payoff)
         
@@ -172,7 +139,7 @@ class DigitalOption(Option):
         strike_price: float,
         maturity: Maturity,
         domestic_rate: Rate,
-        volatility: Volatility,
+        volatility: VolatilityModel,
         option_type: OptionType,
         payment: float = 1.0,
         barrier: Optional[float] = None,
@@ -204,20 +171,13 @@ class DigitalOption(Option):
     def payoff(self, paths: np.ndarray) -> np.ndarray:
         """
         Calcule le payoff de l'option digitale.
-        
-        Args:
-            paths (np.ndarray): Trajectoires de prix du sous-jacent, où chaque ligne
-                              représente une trajectoire et chaque colonne un pas de temps.
-        
-        Returns:
-            np.ndarray: Payoff pour chaque trajectoire.
         """
         final_prices = paths[:, -1]
         
         # Condition de payoff selon le type d'option
-        if self._option_type == OptionType.CALL:
+        if self._option_type == "call":
             condition = final_prices > self._strike_price
-        else:  # PUT
+        else:  
             condition = final_prices < self._strike_price
         
         if self._barrier is None:

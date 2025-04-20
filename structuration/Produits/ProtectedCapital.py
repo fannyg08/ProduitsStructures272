@@ -6,7 +6,7 @@ from datetime import datetime, date
 from base.ClassMaturity import Maturity, DayCountConvention
 from base.ClassOption import Option
 from base.ClassRate import RateModel
-from structuration.ClassDerives import BarrierOption, DigitalOption
+from structuration.ClassDerives import BarrierOption, DigitalOption, EuropeanOption
 from structuration.ClassFixedIncome import ABCBond, ZeroCouponBond
 from structuration.ClassVolatility import VolatilityModel
 from structuration.Produits.ProductBase import BarrierDirection, BarrierType, DecomposableProduct, Product
@@ -27,7 +27,10 @@ class CapitalProtectedNote(DecomposableProduct):
         strike: float,
         participation_rate: float,
         capital_protection: float,
-        rate_model: RateModel
+        rate_model: RateModel,
+        spot_price: float,
+        volatility_model: VolatilityModel,
+        dividend: float = 0.0
     ):
         """
         Initialisation d'une note à capital protégé.
@@ -46,34 +49,31 @@ class CapitalProtectedNote(DecomposableProduct):
         self._participation_rate = participation_rate
         self._capital_protection = capital_protection
         self._rate_model = rate_model
+        self._spot_price = spot_price
+        self._volatility_model = volatility_model
+        self._dividend = dividend
     
     def decompose(self) -> List[Union[ABCBond, Option, Product]]:
-        """
-        Décompose la note à capital protégé en une obligation et une option.
-        
-        Returns:
-            List[Union[ABCBond, Option, Product]]: Liste des composantes
-        """
-        # Composante obligataire (capital protégé)
+        # Obligation
         protected_amount = self._nominal * self._capital_protection
         bond = ZeroCouponBond(
             rate_model=self._rate_model,
             maturity=self._maturity,
             nominal=protected_amount
         )
-        
-        # Composante optionnelle (participation à la hausse)
-        option_nominal = self._nominal * (1 - self._capital_protection) * self._participation_rate
-        option = Option(
-            spot_price=0, 
+
+        # Option
+        option_nominal = self._nominal * self._participation_rate
+        option = EuropeanOption(
+            spot_price=self._spot_price,
             strike_price=self._strike,
             maturity=self._maturity,
             domestic_rate=self._rate_model,
-            volatility=0,  
+            volatility=self._volatility_model,
             option_type="call",
-            nominal=option_nominal
+            dividend=self._dividend
         )
-        
+
         return [bond, option]
     
     def payoff(self, paths: np.ndarray, time_grid: Optional[np.ndarray] = None) -> np.ndarray:

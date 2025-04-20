@@ -43,11 +43,11 @@ class MarketData:
         Initialisation après la création de l'objet.
         """
         # Dimensions
-        if self.market_prices.shape != (len(self.maturities) + 1, len(self.strikes)):
-            print(len(self.maturities), len(self.strikes), self.market_prices.shape)
-            raise ValueError("La matrice market_prices doit avoir la forme (len(maturities), len(strikes)) \n" \
-            f"Or ici, {len(self.maturities), len(self.strikes), self.market_prices.shape}")
-        
+        if self.market_prices.shape != (len(self.maturities), len(self.strikes)):
+            raise ValueError(
+            f"La matrice market_prices doit avoir la forme ({len(self.maturities)}, {len(self.strikes)}) \n"
+            f"Or ici : {self.market_prices.shape}"
+            )
         # On initialise option_types
         self.option_types = np.full_like(self.market_prices, self.option_type, dtype=object)
         
