@@ -3,7 +3,7 @@ import numpy as np
 from scipy import stats
 from dataclasses import dataclass
 from structuration.ClassFixedIncome import ABCBond, Bond, ZeroCouponBond
-from structuration.ClassProduit import DecomposableProduct, Product,CapitalProtectedNoteTwinWin,CapitalProtectedNote, CapitalProtectedNoteWithBarrier, CapitalProtectedNoteWithCoupon
+from structuration.Produits import DecomposableProduct, Product,CapitalProtectedNoteTwinWin,CapitalProtectedNote, CapitalProtectedNoteWithBarrier, CapitalProtectedNoteWithCoupon
 from typing import Dict, List, Optional, Tuple, Union, Literal
 import numpy as np
 from datetime import datetime
