@@ -257,9 +257,441 @@ class AthenaProduct(DecomposableProduct):
     
 
 # autocall Phoenix -> variante de l'Athéna
-
-# twin win certificate (option déjà codée)
-
+class PhoenixProduct(DecomposableProduct):
+    """
+    Produit structuré Phoenix (variante de l'Athéna).
+    
+    Fonctionnement :
+    - Remboursement anticipé automatique aux dates d'observation si le sous-jacent est au-dessus d'un seuil- donc comme un autocall
+    - Coupons conditionnels payés périodiquement si le sous-jacent reste au-dessus d'une barrière de coupon
+      (plus basse que la barrière d'autocall)
+    - Effet mémoire pour les coupons manqués
+    - Barrière de protection du capital à maturité
+    - Exposition à la baisse si le sous-jacent franchit la barrière à maturité
+    """
+    def __init__(
+        self,
+        underlying_id: str,
+        maturity: Maturity,
+        observation_dates: List[date],
+        autocall_barriers: List[float],
+        coupon_barriers: List[float],
+        coupons: List[float],
+        capital_barrier: float,
+        memory_effect: bool = True,
+        nominal: float = 1000.0
+    ):
+        super().__init__(underlying_id, maturity, nominal)
+        
+        # Vérification de la cohérence des listes
+        if len(observation_dates) != len(autocall_barriers) or len(observation_dates) != len(coupon_barriers) or len(observation_dates) != len(coupons):
+            raise ValueError("Les listes observation_dates, autocall_barriers, coupon_barriers et coupons doivent avoir la même longueur")
+        
+        self._observation_dates = observation_dates
+        self._autocall_barriers = autocall_barriers
+        self._coupon_barriers = coupon_barriers
+        self._coupons = coupons
+        self._capital_barrier = capital_barrier
+        self._memory_effect = memory_effect
+    
+    @property
+    def observation_dates(self) -> List[date]:
+        return self._observation_dates
+    
+    @property
+    def autocall_barriers(self) -> List[float]:
+        return self._autocall_barriers
+    
+    @property
+    def coupon_barriers(self) -> List[float]:
+        return self._coupon_barriers
+    
+    @property
+    def coupons(self) -> List[float]:
+        return self._coupons
+    
+    @property
+    def capital_barrier(self) -> float:
+        return self._capital_barrier
+    
+    @property
+    def memory_effect(self) -> bool:
+        return self._memory_effect
+    
+    def payoff(self, paths: np.ndarray, time_grid: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Calcule le payoff du produit Phoenix basé sur les chemins simulés.
+        
+        La principale différence avec l'Athéna est que les coupons sont payés à chaque date
+        d'observation si le sous-jacent est au-dessus de la barrière de coupon, même si
+        la condition d'autocall n'est pas déclenchée.
+        """
+        if time_grid is None:
+            raise ValueError("Le paramètre time_grid est requis pour calculer le payoff d'un produit Phoenix")
+        
+        n_paths = paths.shape[0]
+        payoffs = np.zeros(n_paths)
+        
+        initial_level = paths[:, 0]
+        
+        # Calcul des indices temporels correspondant aux dates d'observation
+        observation_indices = []
+        for obs_date in self._observation_dates:
+            idx = self._find_closest_time_index(obs_date, time_grid)
+            observation_indices.append(idx)
+        
+        # Matrice pour suivre si un chemin a déjà été remboursé
+        redeemed = np.zeros(n_paths, dtype=bool)
+        
+        # Matrice pour suivre les coupons mémorisés si effet mémoire
+        memorized_coupons = np.zeros(n_paths)
+        
+        # Pour chaque date d'observation (sauf la dernière qui est traitée différemment)
+        for i, obs_idx in enumerate(observation_indices[:-1]):
+            level = paths[:, obs_idx]
+            
+            # Vérification de la condition de coupon pour tous les chemins non remboursés
+            coupon_condition = level >= initial_level * self._coupon_barriers[i]
+            coupon_paths = coupon_condition & ~redeemed
+            
+            # Paiement des coupons pour les chemins au-dessus de la barrière de coupon
+            if np.any(coupon_paths):
+                if self._memory_effect:
+                    # Avec effet mémoire: on paie les coupons mémorisés plus le coupon actuel
+                    payoffs[coupon_paths] += (self._coupons[i] * self.nominal + memorized_coupons[coupon_paths])
+                    memorized_coupons[coupon_paths] = 0  # Réinitialisation après paiement
+                else:
+                    # Sans effet mémoire: on paie seulement le coupon actuel
+                    payoffs[coupon_paths] += self._coupons[i] * self.nominal
+            
+            # Mémorisation des coupons manqués pour les chemins sous la barrière
+            missed_coupon_paths = ~coupon_condition & ~redeemed
+            if self._memory_effect and np.any(missed_coupon_paths):
+                memorized_coupons[missed_coupon_paths] += self._coupons[i] * self.nominal
+            
+            # Vérification de la condition d'autocall
+            autocall_condition = level >= initial_level * self._autocall_barriers[i]
+            autocall_paths = autocall_condition & ~redeemed
+            
+            # Remboursement anticipé pour les chemins qui atteignent la condition d'autocall
+            if np.any(autocall_paths):
+                payoffs[autocall_paths] += self.nominal  
+                redeemed[autocall_paths] = True
+        
+        # Traitement à maturité pour les chemins non remboursés par anticipation
+        maturity_idx = observation_indices[-1]
+        maturity_level = paths[:, maturity_idx]
+        not_redeemed = ~redeemed
+        
+        if np.any(not_redeemed):
+            # Vérification de la condition de coupon final
+            final_coupon_condition = maturity_level >= initial_level * self._coupon_barriers[-1]
+            final_coupon_paths = final_coupon_condition & not_redeemed
+            
+            # Paiement du coupon final si condition remplie
+            if np.any(final_coupon_paths):
+                if self._memory_effect:
+                    payoffs[final_coupon_paths] += (self._coupons[-1] * self.nominal + memorized_coupons[final_coupon_paths])
+                else:
+                    payoffs[final_coupon_paths] += self._coupons[-1] * self.nominal
+            
+            # Protection du capital si au-dessus de la barrière
+            capital_protected = maturity_level >= initial_level * self._capital_barrier
+            
+            # Remboursement du nominal pour les chemins protégés
+            protected_paths = capital_protected & not_redeemed
+            if np.any(protected_paths):
+                payoffs[protected_paths] += self.nominal
+            
+            # Exposition à la baisse pour les chemins non protégés
+            unprotected_paths = ~capital_protected & not_redeemed
+            if np.any(unprotected_paths):
+                performance = maturity_level[unprotected_paths] / initial_level[unprotected_paths]
+                payoffs[unprotected_paths] += self.nominal * performance
+        
+        return payoffs
+    
+    def _find_closest_time_index(self, target_date: date, time_grid: np.ndarray) -> int:
+        """
+        Trouve l'indice le plus proche dans la grille temporelle pour une date donnée.
+        """
+        return len(time_grid) - 1
+    
+    def decompose(self) -> List[Union[ABCBond, Option, Product]]:
+        """
+        Décompose le produit Phoenix en composantes élémentaires.
+        """
+        components = []
+        
+        # création des options
+        spot_price = None  
+        rate_model = None 
+        volatility = None
+        
+        # 1. Obligation zéro-coupon pour le remboursement du nominal à maturité
+        zc_bond = ZeroCouponBond(
+            rate_model=rate_model,
+            maturity=self._maturity,
+            nominal=self._nominal
+        )
+        components.append(zc_bond)
+        
+        # 2. Options digitales pour les coupons à chaque date d'observation
+        for i, obs_date in enumerate(self._observation_dates):
+            obs_maturity = Maturity(obs_date)
+            
+            # Option digitale pour le coupon
+            digital_option = DigitalOption(
+                spot_price=spot_price,
+                strike_price=spot_price * self._coupon_barriers[i],
+                maturity=obs_maturity,
+                domestic_rate=rate_model,
+                volatility=volatility,
+                option_type="call",
+                payment=self._coupons[i] * self._nominal,
+                dividend=0.0
+            )
+            components.append(digital_option)
+            
+            # Si effet mémoire, nous devons ajouter des options pour récupérer les coupons précédents
+            if self._memory_effect and i > 0:
+                for j in range(i):
+                    memory_digital_option = DigitalOption(
+                        spot_price=spot_price,
+                        strike_price=spot_price * self._coupon_barriers[i],
+                        maturity=obs_maturity,
+                        domestic_rate=rate_model,
+                        volatility=volatility,
+                        option_type="call",
+                        payment=self._coupons[j] * self._nominal,
+                        dividend=0.0
+                    )
+                    components.append(memory_digital_option)
+        
+        # 3. Mécanisme d'autocall
+        for i, obs_date in enumerate(self._observation_dates[:-1]):
+            obs_maturity = Maturity(obs_date)
+            
+            # Option digitale qui paie le nominal si le sous-jacent est au-dessus de la barrière d'autocall
+            autocall_option = DigitalOption(
+                spot_price=spot_price,
+                strike_price=spot_price * self._autocall_barriers[i],
+                maturity=obs_maturity,
+                domestic_rate=rate_model,
+                volatility=volatility,
+                option_type="call",
+                payment=self._nominal,
+                dividend=0.0
+            )
+            components.append(autocall_option)
+        
+        # 4. Protection conditionnelle du capital à maturité
+        barrier_option = BarrierOption(
+            spot_price=spot_price,
+            strike_price=spot_price,
+            maturity=self._maturity,
+            domestic_rate=rate_model,
+            volatility=volatility,
+            option_type="put",
+            barrier=spot_price * self._capital_barrier,
+            barrier_type="down",
+            knock_type="in",
+            dividend=0.0
+        )
+        components.append(barrier_option)
+        
+        return components
+    
+    
 # range accrual note 
+class RangeAccrualNote(DecomposableProduct):
+    """
+    Produit structuré Range Accrual Note.
+    
+    Fonctionnement :
+    - Paie un taux d'intérêt prédéfini multiplié par le nombre de jours où le sous-jacent
+      se trouve dans une plage spécifiée (range)
+    - Remboursement du nominal à maturité, généralement avec une protection du capital
+    """
+    def __init__(
+        self,
+        underlying_id: str,
+        maturity: Maturity,
+        coupon_rate: float,
+        lower_barrier: float,
+        upper_barrier: float,
+        observation_dates: List[date],
+        payment_dates: List[date],
+        capital_protection: float = 1.0,  # 1.0 = 100% du capital protégé
+        nominal: float = 1000.0
+    ):
+        super().__init__(underlying_id, maturity, nominal)
+        
+        if lower_barrier >= upper_barrier:
+            raise ValueError("La barrière basse doit être inférieure à la barrière haute")
+        
+        if len(payment_dates) == 0:
+            raise ValueError("La liste des dates de paiement ne peut pas être vide")
+        
+        if len(observation_dates) == 0:
+            raise ValueError("La liste des dates d'observation ne peut pas être vide")
+        
+        self._coupon_rate = coupon_rate
+        self._lower_barrier = lower_barrier
+        self._upper_barrier = upper_barrier
+        self._observation_dates = observation_dates
+        self._payment_dates = payment_dates
+        self._capital_protection = capital_protection
+    
+    @property
+    def coupon_rate(self) -> float:
+        return self._coupon_rate
+    
+    @property
+    def lower_barrier(self) -> float:
+        return self._lower_barrier
+    
+    @property
+    def upper_barrier(self) -> float:
+        return self._upper_barrier
+    
+    @property
+    def observation_dates(self) -> List[date]:
+        return self._observation_dates
+    
+    @property
+    def payment_dates(self) -> List[date]:
+        return self._payment_dates
+    
+    @property
+    def capital_protection(self) -> float:
+        return self._capital_protection
+    
+    def payoff(self, paths: np.ndarray, time_grid: Optional[np.ndarray] = None) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        if time_grid is None:
+            raise ValueError("Le paramètre time_grid est requis pour calculer le payoff d'une Range Accrual Note")
+        
+        n_paths = paths.shape[0]
+        initial_level = paths[:, 0]
+        
+        observation_indices = [self._find_closest_time_index(obs_date, time_grid) for obs_date in self._observation_dates]
+        payment_indices = [self._find_closest_time_index(pay_date, time_grid) for pay_date in self._payment_dates]
+        
+        # Structurer les payoffs et leurs dates de paiement
+        n_payments = len(payment_indices)
+        all_payoffs = np.zeros((n_paths, n_payments + 1))  # +1 pour le remboursement du capital
+        payment_times = np.zeros(n_payments + 1)
+        
+        # Regrouper les dates d'observation par période de paiement
+        observation_periods = []
+        current_period = []
+        current_payment_idx = 0
+        
+        for i, obs_idx in enumerate(observation_indices):
+            if current_payment_idx < len(payment_indices) and obs_idx <= payment_indices[current_payment_idx]:
+                current_period.append(obs_idx)
+            else:
+                if current_period:
+                    observation_periods.append(current_period)
+                    current_period = [obs_idx]
+                    current_payment_idx += 1
+                    
+                    # Si on a dépassé les périodes de paiement
+                    if current_payment_idx >= len(payment_indices):
+                        break
+        
+        # Ajouter la dernière période si elle existe
+        if current_period:
+            observation_periods.append(current_period)
+        
+        # Calculer les coupons pour chaque période de paiement
+        for i, period_indices in enumerate(observation_periods):
+            if i < len(payment_indices):
+                payment_times[i] = time_grid[payment_indices[i]]
+                
+                # Compter les jours dans la plage pour chaque chemin
+                in_range_count = np.zeros(n_paths)
+                for obs_idx in period_indices:
+                    level = paths[:, obs_idx]
+                    in_range = (level >= initial_level * self._lower_barrier) & (level <= initial_level * self._upper_barrier)
+                    in_range_count += in_range
+                
+                # Calculer le coupon proportionnel au nombre de jours dans la plage
+                days_in_period = len(period_indices)
+                if days_in_period > 0:
+                    proportion_in_range = in_range_count / days_in_period
+                    all_payoffs[:, i] = self._nominal * self._coupon_rate * proportion_in_range
+        
+        # Remboursement du capital à maturité
+        payment_times[-1] = time_grid[-1]  # Maturité
+        all_payoffs[:, -1] = self._nominal * self._capital_protection
+        
+        return all_payoffs, payment_times
+    
+    def _find_closest_time_index(self, target_date: date, time_grid: np.ndarray) -> int:
+        return len(time_grid) - 1
+    
+    def decompose(self) -> List[Union[ABCBond, Option, Product]]:
+        components = []
+        
+        # Paramètres communs
+        spot_price = None  
+        rate_model = None  
+        volatility = None  
+        
+        # 1. Obligation zéro-coupon pour le remboursement du capital protégé
+        zc_bond = ZeroCouponBond(
+            rate_model=rate_model,
+            maturity=self._maturity,
+            nominal=self._nominal * self._capital_protection
+        )
+        components.append(zc_bond)
+        
+        # 2. Options binaires pour chaque date d'observation et chaque date de paiement
+        for i, payment_date in enumerate(self._payment_dates):
+            payment_maturity = Maturity(payment_date)
+            
+            # Déterminer les dates d'observation associées à cette période de paiement
+            relevant_obs_dates = [d for d in self._observation_dates if d <= payment_date]
+            if i > 0:
+                prev_payment_date = self._payment_dates[i-1]
+                relevant_obs_dates = [d for d in relevant_obs_dates if d > prev_payment_date]
+            
+            n_obs_dates = len(relevant_obs_dates)
+            if n_obs_dates > 0:
+                coupon_per_day = self._coupon_rate * self._nominal / n_obs_dates
+                
+                # Pour chaque date d'observation, ajouter une option digitale à double barrière
+                for obs_date in relevant_obs_dates:
+                    obs_maturity = Maturity(obs_date)
+                    
+                    # Option pour la barrière basse (le sous-jacent doit être au-dessus)
+                    lower_digital = DigitalOption(
+                        spot_price=spot_price,
+                        strike_price=spot_price * self._lower_barrier,
+                        maturity=obs_maturity,
+                        domestic_rate=rate_model,
+                        volatility=volatility,
+                        option_type="call",
+                        payment=coupon_per_day * 0.5,  # Contribution partielle
+                        dividend=0.0
+                    )
+                    components.append(lower_digital)
+                    
+                    # Option pour la barrière haute (le sous-jacent doit être en-dessous)
+                    upper_digital = DigitalOption(
+                        spot_price=spot_price,
+                        strike_price=spot_price * self._upper_barrier,
+                        maturity=obs_maturity,
+                        domestic_rate=rate_model,
+                        volatility=volatility,
+                        option_type="put",
+                        payment=coupon_per_day * 0.5,  # Contribution partielle
+                        dividend=0.0
+                    )
+                    components.append(upper_digital)
+        
+        return components
+
 
 # callable/putable structured products -> option pour l'émetteur de racheter le produit/remboursement anticipé
