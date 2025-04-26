@@ -53,18 +53,21 @@ class Option(ABC):
         Returns:
             float : Valeur de d1.
         """
+        maturity = self._maturity.maturity_in_years
+        if maturity <= 0:
+            raise ValueError("La maturité doit être supérieure à zéro.")
         rate_difference = (
-            (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
+            (self._domestic_rate.discount_factor(maturity) - self._dividend)
             if self._foreign_rate is None
             else (
-                self._domestic_rate.discount_factor(self._maturity)
-                - self._foreign_rate.discount_factor(self._maturity)
+                self._domestic_rate.discount_factor(maturity)
+                - self._foreign_rate.discount_factor(maturity)
             )
         )
         return (
             np.log(self._spot_price / self._strike_price)
             + (
-                (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
+                (self._domestic_rate.discount_factor(maturity) - self._dividend)
                 + 0.5
                 * self._volatility.get_implied_volatility(
                     self._strike_price / self._spot_price,
@@ -87,10 +90,13 @@ class Option(ABC):
         Returns:
             float : Valeur de d2.
         """
+        maturity = self._maturity.maturity_in_years
+        if maturity <= 0:
+            raise ValueError("La maturité doit être supérieure à zéro.")
         return (
             np.log(self._spot_price / self._strike_price)
             + (
-                (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
+                (self._domestic_rate.discount_factor(maturity) - self._dividend)
                 + 0.5
                 * self._volatility.get_implied_volatility(
                     self._strike_price / self._spot_price,

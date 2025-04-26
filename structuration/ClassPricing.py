@@ -89,8 +89,8 @@ class PricingEngine:
         """
         # Paramètres
         S = self._spot_price
-        K = option.strike
-        T = option.maturity.maturity_in_years
+        K = option._strike_price
+        T = option._maturity.maturity_in_years
         r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
@@ -105,12 +105,12 @@ class PricingEngine:
         d2 = self._black_scholes_d2(d1, sigma, T)
         
         # Calcul du prix selon le type d'option
-        if option.option_type == "call":
+        if option._option_type == "call":
             price = S * np.exp(-q * T) * self._norm_cdf(d1) - K * np.exp(-r * T) * self._norm_cdf(d2)
         else:  # put
             price = K * np.exp(-r * T) * self._norm_cdf(-d2) - S * np.exp(-q * T) * self._norm_cdf(-d1)
         
-        return price * option.nominal / K
+        return price * option._spot_price / K
     
     def calculate_greeks_black_scholes(self, option: Option) -> Dict[str, float]:
         """
@@ -118,8 +118,8 @@ class PricingEngine:
         """
         # Paramètres
         S = self._spot_price
-        K = option.strike
-        T = option.maturity.maturity_in_years
+        K = option._strike_price
+        T = option._maturity.maturity_in_years
         r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
@@ -149,7 +149,7 @@ class PricingEngine:
         greeks = {}
         
         # Delta
-        if option.option_type == "call":
+        if option._option_type == "call":
             greeks["delta"] = exp_qt * norm_d1
         else:  # put
             greeks["delta"] = exp_qt * (norm_d1 - 1)
@@ -161,20 +161,20 @@ class PricingEngine:
         greeks["vega"] = S * exp_qt * norm_pdf_d1 * sqrt_T / 100
         
         # Theta (par an)
-        if option.option_type == "call":
+        if option._option_type == "call":
             greeks["theta"] = -S * sigma * exp_qt * norm_pdf_d1 / (2 * sqrt_T) - r * K * exp_rt * norm_d2 + q * S * exp_qt * norm_d1
         else:  # put
             greeks["theta"] = -S * sigma * exp_qt * norm_pdf_d1 / (2 * sqrt_T) + r * K * exp_rt * norm_minus_d2 - q * S * exp_qt * norm_minus_d1
         
         # Rho (pour 1% de variation)
-        if option.option_type == "call":
+        if option._option_type == "call":
             greeks["rho"] = K * T * exp_rt * norm_d2 / 100
         else:  # put
             greeks["rho"] = -K * T * exp_rt * norm_minus_d2 / 100
         
         # Ajuster par le nominal
         for greek in greeks:
-            greeks[greek] *= option.nominal / K
+            greeks[greek] *= option._spot_price / K
         
         return greeks
     
@@ -332,53 +332,50 @@ class PricingEngine:
             return total_price
 
     def calculate_greeks_by_decomposition(self, product: 'DecomposableProduct') -> Dict[str, float]:
-            """
-            Calcule les grecques d'un produit par décomposition.
-            """
-            components = product.decompose()
-            greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
+        """
+        Calcule les grecques d'un produit par décomposition.
+        """
+        components = product.decompose()
+        greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
+        
+        for component in components:
+            component_greeks = {}
             
-            for component in components:
-                component_greeks = {}
-                
-                if isinstance(component, Option):
-                    component_greeks = self.calculate_greeks_black_scholes(component)
+            if isinstance(component, Option):
+                component_greeks = self.calculate_greeks_black_scholes(component)
+            
+            elif isinstance(component, ABCBond):
+                # Initialisation des grecques obligataires (seul rho est pertinent)
+                component_greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}
+
+                original_price = component.compute_price()
+                bump = 0.0001  # 1bp = 0.01%
+
+                if hasattr(component.rate_model, "set_rate"):
+                    # Cas des modèles simples (ex : taux fixe)
+                    rate_value = component.rate_model.get_rate()
+                    component.rate_model.set_rate(rate_value + bump)
+                    bumped_price = component.compute_price(force_recalculate=True)
+                    component.rate_model.set_rate(rate_value)
                 else:
-                    # Pour les obligations, seules certaines grecques sont pertinentes
-                    if isinstance(component, ABCBond):
-                        # Calcul simplifié du rho pour les obligations
-                        component_greeks = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}
-                        
-                        # Calcul de rho par bump du taux
-                        original_price = component.compute_price()
-                        
-                        # Créer une copie du rate model avec un bump de 0.01%
-                        bump = 0.0001  # 1 bp
-                        rate_value = component._rate_model.get_rate() if hasattr(component, '_rate_model') else 0.0
-                        
-                        # Modifié pour accéder au rate_model correct selon le type d'obligation
-                        if isinstance(component, ZeroCouponBond):
-                            component.__rate_model.set_rate(rate_value + bump)
-                            bumped_price = component.compute_price(force_recalculate=True)
-                            component.__rate_model.set_rate(rate_value)
-                        elif isinstance(component, Bond):
-                            component.__rate_model.set_rate(rate_value + bump)
-                            bumped_price = component.compute_price(force_rate=rate_value + bump)
-                            component.__rate_model.set_rate(rate_value)
-                        else:
-                            bumped_price = original_price
-                        
-                        component_greeks["rho"] = (bumped_price - original_price) / bump * 100  # en % de taux
-                    else:
-                        # Autres composantes via Monte Carlo
-                        component_greeks = self.calculate_greeks_monte_carlo(component)
-                
-                # Agréger les grecques
-                for greek in greeks:
-                    if greek in component_greeks:
-                        greeks[greek] += component_greeks[greek]
-            
-            return greeks
+                    # Cas des modèles complexes (ex : Vasicek, CIR, etc.)
+                    maturity = component.maturity.maturity_in_years
+                    bumped_price = original_price * (1 - bump * maturity)
+
+                # Calcul de rho
+                component_greeks["rho"] = (bumped_price - original_price) / bump * 100  # rho en % de taux
+
+            else:
+                # Cas des produits simulés (Monte Carlo)
+                component_greeks = self.calculate_greeks_monte_carlo(component)
+
+            # Agrégation
+            for greek in greeks:
+                if greek in component_greeks:
+                    greeks[greek] += component_greeks[greek]
+
+        return greeks
+
 
     def price(self, product: Product, method: Literal["black_scholes", "monte_carlo", "decomposition"] = "black_scholes") -> float:
         """
