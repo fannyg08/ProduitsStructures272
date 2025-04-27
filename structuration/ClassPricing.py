@@ -90,7 +90,10 @@ class PricingEngine:
         # Paramètres
         S = self._spot_price
         K = option._strike_price
-        T = option._maturity.maturity_in_years
+        if isinstance(option._maturity, Maturity):
+            T = option._maturity.maturity_in_years
+        else:
+            T = option._maturity
         r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
@@ -119,7 +122,10 @@ class PricingEngine:
         # Paramètres
         S = self._spot_price
         K = option._strike_price
-        T = option._maturity.maturity_in_years
+        if isinstance(option._maturity, Maturity):
+            T = option._maturity.maturity_in_years
+        else:
+            T = option._maturity
         r = -np.log(self._domestic_rate.discount_factor(T)) / T
         q = self._dividend
         if self._foreign_rate is not None:
