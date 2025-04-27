@@ -210,7 +210,9 @@ with col_result:
                 memory_effect=memory_effect,
                 nominal=nominal, 
                 spot_price=spot,
-                pricing_date=pricing_date
+                pricing_date=pricing_date,
+                rate_model=vasicek_model, 
+                volatility_model = ssvi_model
             )
 
         elif product_choice == "Phoenix":
@@ -223,9 +225,12 @@ with col_result:
                 coupons=[float(x.strip()) for x in coupons.split(",")],
                 capital_barrier=capital_barrier,
                 memory_effect=memory_effect,
-                nominal=nominal
+                nominal=nominal,
+                spot_price=spot,
+                pricing_date=pricing_date,
+                rate_model=vasicek_model,
+                volatility_model=ssvi_model
             )
-
         elif product_choice == "Range Accrual Note":
             note = RangeAccrualNote(
                 underlying_id=underlying_id,
@@ -236,8 +241,13 @@ with col_result:
                 observation_dates=[datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in observation_dates.split(",")],
                 payment_dates=[datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in payment_dates.split(",")],
                 capital_protection=capital_protection,
-                nominal=nominal
+                nominal=nominal,
+                spot_price=spot,
+                pricing_date=pricing_date,
+                rate_model=vasicek_model,
+                volatility_model=ssvi_model
             )
+
 
         elif product_choice == "Reverse Convertible":
             from structuration.Produits.YieldEnhancement import ReverseConvertible
