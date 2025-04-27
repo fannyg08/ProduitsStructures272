@@ -4,7 +4,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime  # AJOUTÉ
+from datetime import datetime 
 
 from structuration.ClassMarket import MarketData
 from structuration.ClassVolatility import SSVIModel
@@ -93,6 +93,8 @@ with col_market:
 
     # Type d'option
     option_type = st.selectbox("Type d'Option", ["call", "put"])
+    pricing_date = st.date_input("Date de Pricing", value=datetime.today())
+
 
 
 # --------- Colonne 2 : Produit ---------
@@ -206,7 +208,9 @@ with col_result:
                 coupons=[float(x.strip()) for x in coupons.split(",")],
                 capital_barrier=capital_barrier,
                 memory_effect=memory_effect,
-                nominal=nominal
+                nominal=nominal, 
+                spot_price=spot,
+                pricing_date=pricing_date
             )
 
         elif product_choice == "Phoenix":
