@@ -38,6 +38,11 @@ class Option(ABC):
         self._spot_price = spot_price
         self._strike_price = strike_price
         self._maturity = maturity
+        if isinstance(maturity, Maturity):
+            self._maturity = maturity.maturity_in_years
+        else:
+            self._maturity = maturity
+
         self._domestic_rate = domestic_rate
         self._volatility = volatility
         self._option_type = option_type
@@ -53,7 +58,7 @@ class Option(ABC):
         Returns:
             float : Valeur de d1.
         """
-        maturity = self._maturity.maturity_in_years
+        maturity = self._maturity
         if maturity <= 0:
             raise ValueError("La maturité doit être supérieure à zéro.")
         rate_difference = (
@@ -71,16 +76,16 @@ class Option(ABC):
                 + 0.5
                 * self._volatility.get_implied_volatility(
                     self._strike_price / self._spot_price,
-                    self._maturity.maturity_in_years,
+                    maturity,
                 )
                 ** 2
             )
-            * self._maturity.maturity_in_years
+            * maturity
         ) / (
             self._volatility.get_implied_volatility(
-                self._strike_price / self._spot_price, self._maturity.maturity_in_years
+                self._strike_price / self._spot_price, maturity
             )
-            * np.sqrt(self._maturity.maturity_in_years)
+            * np.sqrt(maturity)
         )
 
     def __d2_func(self) -> float:
@@ -90,7 +95,7 @@ class Option(ABC):
         Returns:
             float : Valeur de d2.
         """
-        maturity = self._maturity.maturity_in_years
+        maturity = self._maturity
         if maturity <= 0:
             raise ValueError("La maturité doit être supérieure à zéro.")
         return (
@@ -100,20 +105,20 @@ class Option(ABC):
                 + 0.5
                 * self._volatility.get_implied_volatility(
                     self._strike_price / self._spot_price,
-                    self._maturity.maturity_in_years,
+                    maturity,
                 )
                 ** 2
             )
-            * self._maturity.maturity_in_years
+            * maturity
         ) / (
             self._volatility.get_implied_volatility(
-                self._strike_price / self._spot_price, self._maturity.maturity_in_years
+                self._strike_price / self._spot_price,maturity
             )
-            * np.sqrt(self._maturity.maturity_in_years)
+            * np.sqrt(maturity)
         ) - self._volatility.get_implied_volatility(
-            self._strike_price / self._spot_price, self._maturity.maturity_in_years
+            self._strike_price / self._spot_price, maturity
         ) * np.sqrt(
-            self._maturity.maturity_in_years
+            maturity
         )
 
     @property
@@ -125,8 +130,8 @@ class Option(ABC):
     def d2(self) -> float:
         """Renvoie la valeur de d2 (recalculé à partir de d1 pour éviter les erreurs cumulées)."""
         return self._d1 - self._volatility.get_implied_volatility(
-            self._strike_price / self._spot_price, self._maturity.maturity_in_years
-        ) * np.sqrt(self._maturity.maturity_in_years)
+            self._strike_price / self._spot_price, self._maturity
+        ) * np.sqrt(self._maturity)
 
     @abstractmethod
     def compute_price(self):
@@ -187,17 +192,17 @@ class Option(ABC):
         Returns:
             np.ndarray : Tableau (num_paths, num_steps + 1) contenant les trajectoires.
         """
-        dt = self._maturity.maturity_in_years / num_steps
+        dt = self._maturity / num_steps
         nudt = (
             (self._domestic_rate.discount_factor(self._maturity) - self._dividend)
             - 0.5
             * self._volatility.get_implied_volatility(
-                self._strike_price / self._spot_price, self._maturity.maturity_in_years
+                self._strike_price / self._spot_price, self._maturity
             )**2
         ) * dt
 
         volsdt = self._volatility.get_implied_volatility(
-            self._strike_price / self._spot_price, self._maturity.maturity_in_years
+            self._strike_price / self._spot_price, self._maturity
         ) * np.sqrt(dt)
 
         paths = np.zeros((num_paths, num_steps + 1))
