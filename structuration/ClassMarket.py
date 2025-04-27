@@ -212,7 +212,7 @@ class MarketData:
         # Extraction des données de base : 
         # strikes en colonnes (en ne considérant pas la première colonne de maturités)
         strikes = np.array(df.columns[1:].astype(float))
-        raw_maturities = pd.to_datetime(df.iloc[1:, 0]) 
+        raw_maturities = pd.to_datetime(df.iloc[1:, 0])
         market_prices = df.iloc[:, 1:].values
         
         if pricing_date is None : 
