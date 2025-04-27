@@ -34,7 +34,7 @@ with col_market:
     spot = st.number_input("Spot", value=100.0)
 
     # Strikes : nombre et bornes
-    st.markdown("#### Strikes")
+    st.markdown("##### Strikes")
     col1, col2, col3 = st.columns(3)
     with col1:
         n_strikes = st.number_input("Nombre", min_value=1, max_value=20, value=5, step=1)
@@ -46,7 +46,7 @@ with col_market:
     strikes = np.linspace(strike_min, strike_max, int(n_strikes))
 
     # Maturities : nombre et bornes
-    st.markdown("#### Maturités (en années)")
+    st.markdown("##### Maturités (en années)")
     # Nombre de maturités et bornes
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -59,7 +59,7 @@ with col_market:
     maturities = np.linspace(maturity_min, maturity_max, int(n_maturities))
 
     # Prix de Marché dans un tableau éditable
-    st.markdown("#### Prix de Marché (éditables)")
+    st.markdown("##### Prix de Marché (éditables)")
 
     # Créer un tableau par défaut aléatoire
     default_prices = np.round(10 + np.random.randn(len(maturities), len(strikes)), 2)
@@ -307,4 +307,5 @@ if "historique" in st.session_state and len(st.session_state.historique) > 0:
 
 if __name__ == "__main__":
     import os
-    os.system("streamlit run " + __file__)
+    if not any("streamlit" in arg for arg in os.sys.argv):
+        os.system(f"streamlit run {__file__}")
