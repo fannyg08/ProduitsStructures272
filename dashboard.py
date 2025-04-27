@@ -3,6 +3,9 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime  # AJOUTÉ
+
 from structuration.ClassMarket import MarketData
 from structuration.ClassVolatility import SSVIModel
 from base.ClassRate import VasicekModel
@@ -10,128 +13,298 @@ from structuration.ClassPricing import PricingEngine
 from structuration.Produits.ProtectedCapital import CapitalProtectedNote
 from base.ClassMaturity import Maturity
 
+from structuration.Produits.Complex import AthenaProduct
+from structuration.Produits.Complex import PhoenixProduct
+from structuration.Produits.Complex import RangeAccrualNote
+
+
 # --------- Interface utilisateur Streamlit ---------
 
-st.title("Dashboard Pricing - Produits Structurés")
+st.set_page_config(
+    page_title="Dashboard Pricing Produits Structurés",
+    page_icon=":moneybag:",
+    layout="wide"
+)
 
-st.header("Entrée des données de marché")
+col_market, col_product, col_result = st.columns(3)
 
-with st.form("formulaire_pricing"):
-    # Spot
+with col_market:
+    st.header("Données de Marché")
+    
     spot = st.number_input("Spot", value=100.0)
 
-    # Strikes
-    strikes_input = st.text_input("Liste des strikes (séparés par des virgules)", "80,90,100,110,120")
-    strikes = np.array([float(x.strip()) for x in strikes_input.split(",")])
+    # Strikes : nombre et bornes
+    st.markdown("#### Strikes")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        n_strikes = st.number_input("Nombre", min_value=1, max_value=20, value=5, step=1)
+    with col2:
+        strike_min = st.number_input("Min.",min_value=0.0, max_value=200.0,  value=80.0, step=1.0)
+    with col3:
+        strike_max = st.number_input("Max.", min_value=0.0, max_value=200.0, value=120.0, step=1.0)
+    
+    strikes = np.linspace(strike_min, strike_max, int(n_strikes))
 
-    # Maturités
-    maturities_input = st.text_input("Liste des maturités (en années, séparées par des virgules)", "0.5,1.0,2.0")
-    maturities = np.array([float(x.strip()) for x in maturities_input.split(",")])
+    # Maturities : nombre et bornes
+    st.markdown("#### Maturités (en années)")
+    # Nombre de maturités et bornes
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        n_maturities = st.number_input("Nombre", min_value=1, max_value=20, value=3, step=1)
+    with col2:
+        maturity_min = st.number_input("Min.",min_value=0.1, max_value=100.0, value=0.5, step=1.0)
+    with col3:
+        maturity_max = st.number_input("Max.", min_value=0.1, max_value=100.0, value=2.0, step=1.0)
+    
+    maturities = np.linspace(maturity_min, maturity_max, int(n_maturities))
 
-    # Prix du marché
-    st.write("Entrez les prix de marché sous forme de tableau : une ligne par maturité, séparée par des ';', et chaque valeur séparée par une virgule.")
-    market_prices_input = st.text_area("Prix de marché", "10,11,12,13,14;9,10,11,12,13;8,9,10,11,12")
-    market_prices = np.array([
-        [float(price) for price in line.split(",")]
-        for line in market_prices_input.strip().split(";")
-    ])
+    # Prix de Marché dans un tableau éditable
+    st.markdown("#### Prix de Marché (éditables)")
 
-    # Vérification dimensions
+    # Créer un tableau par défaut aléatoire
+    default_prices = np.round(10 + np.random.randn(len(maturities), len(strikes)), 2)
+    default_df = pd.DataFrame(
+        default_prices, 
+        index=[f"{t:.2f}y" for t in maturities], 
+        columns=[f"{k:.2f}" for k in strikes]
+    )
+
+    # Editeur interactif
+    market_prices_df = st.data_editor(
+        default_df,
+        num_rows="fixed",
+        use_container_width=True
+    )
+
+    market_prices = market_prices_df.values
+
     if market_prices.shape != (len(maturities), len(strikes)):
-        st.error("Le tableau de prix doit correspondre aux strikes et maturités.")
+        st.error("Erreur : dimensions des prix incohérentes avec strikes/maturités.")
         st.stop()
 
-    # Option type
-    option_type = st.selectbox("Type d'option", ["call", "put"])
+    # Taux côte à côte
+    col1, col2 = st.columns(2)
 
-    # Taux sans risque
-    risk_free_rate = st.number_input("Taux sans risque (ex: 0.03 pour 3%)", value=0.03)
+    with col1:
+        risk_free_rate = st.number_input("Taux sans risque", value=0.03, step=0.001, format="%.4f")
+    
+    with col2:
+        dividend_yield = st.number_input("Taux de dividende", value=0.00, step=0.001, format="%.4f")
 
-    # Dividende
-    dividend_yield = st.number_input("Taux de dividende (ex: 0.00)", value=0.0)
+    # Type d'option
+    option_type = st.selectbox("Type d'Option", ["call", "put"])
 
-    st.header("Paramètres du produit structuré")
 
-    underlying_id = st.text_input("Nom du sous-jacent (ex: SPX)", "SPX")
-    maturity_years = st.slider("Maturité (en années)", min_value=0.5, max_value=10.0, value=5.0, step=0.5)
-    strike = st.number_input("Strike produit", value=100.0)
-    participation_rate = st.number_input("Taux de participation", value=1.5)
-    capital_protection = st.slider("Protection du capital", min_value=0.0, max_value=1.0, value=0.9, step=0.05)
-    nominal = st.number_input("Nominal", value=1000.0)
+# --------- Colonne 2 : Produit ---------
+with col_product:
+    st.header("Paramètres du Produit")
 
-    # BOUTON
-    submitted = st.form_submit_button("Lancer le pricing")
-
-if submitted:
-    # --------- Construction du marché ---------
-    market_data = MarketData(
-        spot=spot,
-        maturities=maturities,
-        strikes=strikes,
-        market_prices=market_prices,
-        option_type=option_type,
-        risk_free_rate=risk_free_rate,
-        dividend_yield=dividend_yield
+    product_choice = st.selectbox(
+        "Sélectionnez un produit",
+        [
+            "Capital Protected Note",
+            "Athena",
+            "Phoenix",
+            "Range Accrual Note",
+            "Reverse Convertible",
+            "Discount Certificate"
+        ],
+        index=0
     )
 
-    ssvi_model = SSVIModel(market_data=market_data)
-    params = ssvi_model.calibrate()
+    # Interface Produit
+    underlying_id = st.text_input("Sous-jacent", "SPX")
+    maturity_years = st.slider("Maturité (années)", 0.5, 30.0, 5.0, step=0.5)
+    nominal = st.number_input("Nominal (€)", value=1000.0)
 
-    vasicek_model = VasicekModel(a=0.1, b=0.03, sigma=0.01, r0=risk_free_rate)
+    if product_choice == "Capital Protected Note":
+        strike = st.number_input("Strike du produit", value=100.0)
+        participation_rate = st.number_input("Taux de participation", value=1.5)
+        capital_protection = st.slider("Protection du capital (%)", 0.0, 1.0, 0.9, step=0.05)
 
-    engine = PricingEngine(
-        spot_price=spot,
-        domestic_rate=vasicek_model,
-        volatility=ssvi_model,
-        dividend=dividend_yield,
-        num_paths=10000,
-        num_steps=252,
-        seed=42
-    )
+    if product_choice in ["Athena", "Phoenix"]:
+        observation_dates = st.text_area("Dates d'observation (YYYY-MM-DD, séparées par ',')", "2025-12-31,2026-12-31,2027-12-31")
+        autocall_barriers = st.text_input("Barrières d'autocall (%)", "1.0,1.0,1.0")
+        coupon_barriers = st.text_input("Barrières de coupon (%)", "0.7,0.7,0.7")
+        coupons = st.text_input("Coupons (%)", "0.05,0.05,0.05")
+        capital_barrier = st.number_input("Barrière de protection capital (%)", value=0.6)
+        memory_effect = st.checkbox("Effet mémoire", value=True)
 
-    # --------- Construction du produit ---------
-    note = CapitalProtectedNote(
-        underlying_id=underlying_id,
-        maturity=Maturity(maturity_years),
-        nominal=nominal,
-        strike=strike,
-        participation_rate=participation_rate,
-        capital_protection=capital_protection,
-        rate_model=vasicek_model,
-        spot_price=spot,
-        volatility_model=ssvi_model,
-        dividend=dividend_yield
-    )
+    if product_choice == "Range Accrual Note":
+        coupon_rate = st.number_input("Taux de coupon annuel (%)", value=5.0) / 100
+        lower_barrier = st.number_input("Barrière basse (% du spot)", value=0.8)
+        upper_barrier = st.number_input("Barrière haute (% du spot)", value=1.2)
+        observation_dates = st.text_area("Dates d'observation (YYYY-MM-DD, séparées par ',')", "2025-06-30,2025-12-31,2026-06-30,2026-12-31")
+        payment_dates = st.text_area("Dates de paiement (YYYY-MM-DD, séparées par ',')", "2025-12-31,2026-12-31")
+        capital_protection = st.slider("Protection capital (%)", 0.0, 1.0, 1.0, step=0.05)
 
-    # Pricing
-    price = engine.price(note, method="decomposition")
-    greeks = engine.calculate_greeks(note, method="decomposition")
+    if product_choice == "Reverse Convertible":
+        coupon = st.number_input("Coupon (%)", value=5.0)
+        strike_level = st.number_input("Niveau de strike (% du spot)", value=100.0)
 
-    # Résultats
-    st.success(f"Prix : {price:.2f} €")
+    if product_choice == "Discount Certificate":
+        discount = st.number_input("Décote (%)", value=10.0)
+        cap_level = st.number_input("Cap (% du spot)", value=110.0)
 
-    greeks_df = pd.DataFrame.from_dict(greeks, orient='index', columns=["Valeur"])
-    st.subheader("Grecques :")
-    st.dataframe(greeks_df)
+    submitted = st.button("Lancer le Pricing", use_container_width=True)
 
-    # Historique
-    if "historique" not in st.session_state:
-        st.session_state.historique = []
+# --------- Colonne 3 : Résultats ---------
+with col_result:
+    st.header("Résultats")
 
-    st.session_state.historique.append({
-        "Sous-jacent": underlying_id,
-        "Prix (€)": price,
-        "Maturité (ans)": maturity_years,
-        "Strike": strike,
-        "Participation": participation_rate,
-        "Capital Protection": capital_protection,
-        **greeks
-    })
+    if submitted:
+        # --- Marché
+        market_data = MarketData(
+            spot=spot,
+            maturities=maturities,
+            strikes=strikes,
+            market_prices=market_prices,
+            option_type=option_type,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield
+        )
 
-# --------- Historique ---------
+        ssvi_model = SSVIModel(market_data=market_data)
+        ssvi_model.calibrate()
+
+        vasicek_model = VasicekModel(a=0.1, b=0.03, sigma=0.01, r0=risk_free_rate)
+
+        engine = PricingEngine(
+            spot_price=spot,
+            domestic_rate=vasicek_model,
+            volatility=ssvi_model,
+            dividend=dividend_yield,
+            num_paths=10000,
+            num_steps=252,
+            seed=42
+        )
+
+        # --- Produit
+        note = None
+
+        if product_choice == "Capital Protected Note":
+            note = CapitalProtectedNote(
+                underlying_id=underlying_id,
+                maturity=Maturity(maturity_years),
+                nominal=nominal,
+                strike=strike,
+                participation_rate=participation_rate,
+                capital_protection=capital_protection,
+                rate_model=vasicek_model,
+                spot_price=spot,
+                volatility_model=ssvi_model,
+                dividend=dividend_yield
+            )
+
+        elif product_choice == "Athena":
+            note = AthenaProduct(
+                underlying_id=underlying_id,
+                maturity=Maturity(maturity_years),
+                observation_dates=[datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in observation_dates.split(",")],
+                autocall_barriers=[float(x.strip()) for x in autocall_barriers.split(",")],
+                coupon_barriers=[float(x.strip()) for x in coupon_barriers.split(",")],
+                coupons=[float(x.strip()) for x in coupons.split(",")],
+                capital_barrier=capital_barrier,
+                memory_effect=memory_effect,
+                nominal=nominal
+            )
+
+        elif product_choice == "Phoenix":
+            note = PhoenixProduct(
+                underlying_id=underlying_id,
+                maturity=Maturity(maturity_years),
+                observation_dates=[datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in observation_dates.split(",")],
+                autocall_barriers=[float(x.strip()) for x in autocall_barriers.split(",")],
+                coupon_barriers=[float(x.strip()) for x in coupon_barriers.split(",")],
+                coupons=[float(x.strip()) for x in coupons.split(",")],
+                capital_barrier=capital_barrier,
+                memory_effect=memory_effect,
+                nominal=nominal
+            )
+
+        elif product_choice == "Range Accrual Note":
+            note = RangeAccrualNote(
+                underlying_id=underlying_id,
+                maturity=Maturity(maturity_years),
+                coupon_rate=coupon_rate,
+                lower_barrier=lower_barrier,
+                upper_barrier=upper_barrier,
+                observation_dates=[datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in observation_dates.split(",")],
+                payment_dates=[datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in payment_dates.split(",")],
+                capital_protection=capital_protection,
+                nominal=nominal
+            )
+
+        elif product_choice == "Reverse Convertible":
+            from structuration.Produits.YieldEnhancement import ReverseConvertible
+            note = ReverseConvertible(
+                underlying_id=underlying_id,
+                maturity=Maturity(maturity_years),
+                nominal=nominal,
+                coupon=coupon / 100,
+                strike_level=strike_level / 100
+            )
+
+        elif product_choice == "Discount Certificate":
+            from structuration.Produits.YieldEnhancement import DiscountCertificate
+            note = DiscountCertificate(
+                underlying_id=underlying_id,
+                maturity=Maturity(maturity_years),
+                nominal=nominal,
+                discount=discount / 100,
+                cap_level=cap_level / 100
+            )
+
+        # --- Pricing
+        price = engine.price(note, method="decomposition")
+        greeks = engine.calculate_greeks(note, method="decomposition")
+
+        st.success(f"💰 Prix estimé : {price:.2f} €")
+
+        greeks_df = pd.DataFrame.from_dict(greeks, orient='index', columns=["Valeur"])
+        st.dataframe(greeks_df, use_container_width=True)
+
+        # --- Historique
+        if "historique" not in st.session_state:
+            st.session_state.historique = []
+
+        historique = {
+            "Produit": product_choice,
+            "Sous-jacent": underlying_id,
+            "Prix (€)": price,
+            "Maturité (ans)": maturity_years,
+            "Nominal (€)": nominal,
+            **greeks
+        }
+        st.session_state.historique.append(historique)
+
+        # --- Surface de volatilité
+        st.subheader("Surface de Volatilité Implicite")
+
+        fig = plt.figure(figsize=(5, 4))
+        ax = fig.add_subplot(111, projection='3d')
+        X, Y = np.meshgrid(strikes, maturities)
+        Z = np.zeros_like(X)
+
+        for i, t in enumerate(maturities):
+            for j, k in enumerate(strikes):
+                Z[i, j] = ssvi_model.get_implied_volatility(k, t)
+
+        ax.plot_surface(X, Y, Z, cmap='viridis')
+        ax.set_xlabel("Strike")
+        ax.set_ylabel("Maturité")
+        ax.set_zlabel("Volatilité")
+        st.pyplot(fig)
+
+# --------- Historique global ---------
+st.divider()
 
 if "historique" in st.session_state and len(st.session_state.historique) > 0:
-    st.subheader("Historique des pricings")
+    st.subheader("Historique des Pricings")
     df = pd.DataFrame(st.session_state.historique)
-    st.dataframe(df)
-    st.download_button("Télécharger l'historique en CSV", df.to_csv(index=False), file_name="historique_pricing.csv")
+    st.dataframe(df, use_container_width=True)
+    st.download_button("Télécharger l'historique CSV", df.to_csv(index=False), file_name="historique_pricing.csv", use_container_width=True)
+
+if __name__ == "__main__":
+    import os
+    os.system("streamlit run " + __file__)
